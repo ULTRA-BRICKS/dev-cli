@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""dev — entry point for dev-cli.
+
+A thin shim: put the repo root (so ``dev_cli`` imports) and the vendored libs dir (so
+``agenttools_config`` imports) on ``sys.path``, so it runs from a source checkout with NO install
+step — the same self-contained guarantee the sibling symlink-install CLIs give. Then hand off to
+the CLI. Stdlib-only here; the (vendored) config loader + PyYAML are imported lazily inside the
+command that reads rig.yaml.
+
+install.sh symlinks this file into a bin dir; the symlink must resolve back to the repo to find
+``dev_cli`` and ``vendor``. pipx / package installs use [project.scripts] dev = "dev_cli.cli:main"
+and never run this file — keep it MINIMAL.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# this file is <repo>/bin/dev; the repo root is <repo>/, which holds dev_cli/ and vendor/.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _p in (_REPO_ROOT, _REPO_ROOT / "vendor"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+from dev_cli.cli import main  # noqa: E402 (after sys.path setup)
+
+if __name__ == "__main__":
+    raise SystemExit(main())

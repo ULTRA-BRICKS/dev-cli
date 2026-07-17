@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dev-cli"
+version = "0.1.1"
+description = "Project-scoped dev/e2e process runner: run a repo's rig.yaml scripts and manage background dev servers / e2e jobs, per project, with safe-by-default process control. Spun out of the agent-tools umbrella (was lib/agenttools_dev)."
+readme = "README.md"
+# 3.9 to match the ecosystem floor (agenttools-config targets >=3.9).
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Alex Mextner" }]
+keywords = ["development", "cli", "rig", "e2e", "process", "agent-tools"]
+
+# ZERO required runtime deps. The shared agenttools-config loader is NOT taken from PyPI: it is
+# VENDORED under vendor/ (strategy B) and imported via the sys.path shims, kept single-source via
+# the pinned-SHA drift guard (scripts/resync_vendored_libs.py). When agenttools-config is published
+# to PyPI, the vendored copy can be swapped for a declared caret-range dep here and the vendor/
+# sys.path shims dropped.
+dependencies = []
+
+[project.optional-dependencies]
+# yaml: needed to read rig.yaml (the config cascade). agenttools_config imports PyYAML lazily, so
+# `dev --help` / the probe never need it — but any command that reads rig.yaml does.
+yaml = ["pyyaml"]
+test = ["pytest", "pyyaml"]
+
+[project.scripts]
+dev = "dev_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/alex-mextner/dev-cli"
+
+# Discover the tool package AND the vendored library (so an editable/pip install makes
+# agenttools_config importable too, alongside the checkout-time vendor/ sys.path shims). The
+# editable/source checkout is the supported install path (mirrors the sibling symlink-install CLIs).
+[tool.setuptools.packages.find]
+where = [".", "vendor"]
+include = ["dev_cli*", "agenttools_config*"]
+
+[tool.ruff]
+line-length = 100
+# The vendored tree is a byte-identical mirror of the agent-tools canonical — never lint or
+# reformat it here (the drift guard requires it stay identical; fixes land upstream).
+extend-exclude = ["vendor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

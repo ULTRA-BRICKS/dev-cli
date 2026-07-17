@@ -1,0 +1,80 @@
+name: vendored-libs-drift
+
+# UPSTREAM-drift guard for the vendored agent-tools libraries (strategy B, the research-cli pattern).
+#
+# The pinned-SHA test (tests/test_vendored_libs_sync.py) runs on every PR and catches a LOCAL
+# edit to a vendored copy — but it can't see the agent-tools canonical, so it can't catch the
+# canonical CHANGING upstream while our pinned copy stays put. This scheduled job closes that
+# gap: it checks out the agent-tools catalog and runs the re-sync script in --check mode, which
+# fails when a vendored file no longer matches the current canonical. On drift it opens / updates
+# a tracking issue instead of silently going stale.
+#
+# Cross-repo read: if agent-tools is private, set an AGENT_TOOLS_TOKEN secret and pass it as
+# `token:` on that checkout step.
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dev-cli
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Checkout agent-tools (the canonical lib source)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: alex-mextner/agent-tools
+          path: .agent-tools-src
+          token: ${{ secrets.AGENT_TOOLS_TOKEN }}   # required while agent-tools is private
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Check the vendored libs against the current canonical
+        id: drift
+        run: |
+          set +e
+          python scripts/resync_vendored_libs.py --check "$GITHUB_WORKSPACE/.agent-tools-src"
+          rc=$?
+          set -e
+          # rc 0 = in sync · rc 1 = real DRIFT (re-sync) · rc >=2 = infra error (path moved /
+          # usage / crash) — the latter is NOT drift and "re-sync the body" would be wrong advice.
+          if [ "$rc" -eq 0 ]; then
+            echo "outcome=ok" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -eq 1 ]; then
+            echo "outcome=drift" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=error" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open / update a tracking issue (real drift vs infra error get different advice)
+        if: steps.drift.outputs.outcome != 'ok'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ steps.drift.outputs.outcome }}" = "drift" ]; then
+            title="vendored agent-tools libs have drifted from the canonical"
+            body=$'The scheduled drift check found a vendored lib under `vendor/` is no longer in sync with the agent-tools canonical.\n\nRe-sync it:\n```\npython scripts/resync_vendored_libs.py /path/to/agent-tools\n```\nthen commit.'
+          else
+            title="vendored-libs drift CHECK failed (infra error, not drift)"
+            body=$'The scheduled drift check exited with an infrastructure error (>=2), NOT a body mismatch — likely a canonical path moved in agent-tools (VENDORED list), a bad checkout, or a script crash. Re-syncing the body is NOT the fix; investigate the check itself. See `.github/workflows/vendored-libs-drift.yml`.'
+          fi
+          # Match the EXACT title (the drift vs infra titles share words — a substring search
+          # could comment on the wrong one). `--jq` filters on an exact `.title == $title`;
+          # `// empty` keeps an empty result "" so the create branch stays reachable.
+          existing=$(gh issue list --search "$title in:title" --state open --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty" || true)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh label create drift --color FBCA04 --description "vendored-copy drift from canonical" 2>/dev/null || true
+            gh issue create --title "$title" --body "$body" --label drift
+          fi

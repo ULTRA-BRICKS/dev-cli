@@ -1,0 +1,62 @@
+name: tests
+
+# The green/red gate for dev-cli: ruff + the full pytest suite (which includes the vendored-libs
+# pinned-SHA drift guard, tests/test_vendored_libs_sync.py) on every PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Match the package floor (requires-python >=3.9, the agenttools-config floor).
+        python-version: ["3.9", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package + test deps
+        run: pip install -e '.[test]'
+      - name: Unit suite (incl. vendored-libs drift guard)
+        run: python -m pytest -q
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: ruff check
+        run: ruff check .
+
+  secret-scan:
+    name: gitleaks (block on secrets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks-action's PR mode enumerates the PR's commits via the API; on a private repo
+      # the default GITHUB_TOKEN needs pull-requests: read or it 403s ("Resource not accessible
+      # by integration") before it can scan. Read-only — it does not let the action mutate the PR.
+      pull-requests: read
+    steps:
+      - name: Checkout (full history — gitleaks scans commits, not just the tree)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

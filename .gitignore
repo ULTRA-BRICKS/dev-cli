@@ -1,0 +1,19 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Python package build artifacts (dev-cli is a real package; pip build produces these from
+# pyproject.toml — never commit them).
+build/
+dist/
+*.egg-info/
+
+# uv writes a lockfile when run via `uv run`; the dev/CI path is pip, so the lock is a local
+# artifact — never commit it.
+uv.lock
+
+# Per-machine Claude Code harness overrides (a shared settings.json IS committed).
+.claude/settings.local.json
