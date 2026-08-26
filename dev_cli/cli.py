@@ -189,6 +189,47 @@ def _build_parser() -> argparse.ArgumentParser:
     e2e_stop = e2e_sub.add_parser("stop", help="stop a configured e2e job")
     e2e_stop.add_argument("target")
 
+    shot = sub.add_parser(
+        "shot",
+        help="capture a screenshot, check it is not blank, and record the proof",
+        epilog=(
+            "Captures with a scroll sweep so reveal-on-scroll sections have entered the "
+            "viewport before the shutter, measures the result, and writes a proof record ONLY "
+            "if the capture is admissible. The record is bound to the capture bytes and to "
+            "`git diff --cached`, so it cannot be reused for a different change or survive "
+            "further edits. The agent never writes the record; this command does.\n\n"
+            "Exit codes: 0 captured and attested; 3 the capture is degenerate (blank band, "
+            "wrong viewport) and no proof was written; 4 the capture is fine but proof could "
+            "not be recorded (nothing staged, or the record could not be written) - retaking "
+            "will not help; 127 agent-browser is missing.\n\n" + common_epilog
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    shot.add_argument("url", help="URL to capture, e.g. http://localhost:4173/")
+    shot.add_argument("--out", required=True, help="path to write the PNG capture to")
+    shot.add_argument(
+        "--viewport",
+        default="1440x900",
+        help="viewport as WIDTHxHEIGHT (default: 1440x900)",
+    )
+    shot.add_argument(
+        "--repo",
+        default=".",
+        help="repository the proof is bound to (default: current directory)",
+    )
+    shot.add_argument(
+        "--sweep-step",
+        type=_positive_int,
+        default=400,
+        help="pixels per scroll step during the sweep (default: 400)",
+    )
+    shot.add_argument(
+        "--no-attest",
+        action="store_true",
+        help="capture and measure only; do not write a proof record",
+    )
+    shot.add_argument("--json", action="store_true", help="print the result as JSON")
+
     env = sub.add_parser(
         "env",
         help=f"print shell exports for {DEV_PROJECT_PATHS_ENV}",
@@ -296,6 +337,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return _cmd_stop(args)
         if args.command == "e2e":
             return _cmd_e2e(args)
+        if args.command == "shot":
+            return _cmd_shot(args)
         if args.command == "env":
             return _cmd_env(args)
         if args.command == "kill-orphan":
@@ -1006,6 +1049,115 @@ def _pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+EXIT_BAD_CAPTURE = 3
+# Distinct from EXIT_BAD_CAPTURE so a caller can tell "retake the screenshot" from "the
+# screenshot is fine, stage your change" - retrying a capture never fixes a binding failure.
+EXIT_UNBOUND_PROOF = 4
+
+
+def _parse_viewport(raw: str) -> tuple[int, int]:
+    parts = raw.lower().split("x")
+    if len(parts) != 2:
+        raise DevError(f"--viewport must be WIDTHxHEIGHT, got {raw!r}")
+    try:
+        width, height = int(parts[0], 10), int(parts[1], 10)
+    except ValueError as exc:
+        raise DevError(f"--viewport must be WIDTHxHEIGHT, got {raw!r}") from exc
+    if width <= 0 or height <= 0:
+        raise DevError("--viewport dimensions must be positive")
+    return width, height
+
+
+def _cmd_shot(args: argparse.Namespace) -> int:
+    """Capture, measure, and attest - the whole cycle, so the caller never attests alone.
+
+    Heavy work is imported lazily here to keep module import stdlib-only and `dev --help` fast.
+    """
+    import hashlib
+
+    from . import visual_proof
+
+    width, height = _parse_viewport(args.viewport)
+    repo = Path(args.repo).expanduser()
+    if not repo.is_dir():
+        raise DevError(f"--repo is not a directory: {repo}")
+    # Bind to the repository ROOT, matching every other command, so a capture taken from a
+    # subdirectory still records the path the gate resolves at commit time.
+    try:
+        repo = _find_repo_root(repo)
+    except DevError:
+        pass  # not a git repo: write_attestation refuses below, with a clearer message
+
+    try:
+        context = visual_proof.capture_with_sweep(
+            args.url, args.out, width, height, sweep_step=args.sweep_step
+        )
+        # Read ONCE, then measure and hash the same bytes: re-reading would let a concurrent
+        # writer swap the file so the record describes bytes the verdict never judged.
+        payload = Path(args.out).read_bytes()
+        metrics = visual_proof.measure_png_bytes(payload, source=args.out)
+    except visual_proof.MissingBackendError as exc:
+        raise DevError(str(exc), exit_code=EXIT_MISSING_DEP) from exc
+    except visual_proof.CaptureError as exc:
+        raise DevError(str(exc), exit_code=EXIT_BAD_CAPTURE) from exc
+    except OSError as exc:
+        raise DevError(
+            f"no capture file to measure at {args.out}: {exc}", exit_code=EXIT_BAD_CAPTURE
+        ) from exc
+
+    verdict = visual_proof.verdict_for(
+        metrics, expect_width=width, expect_height=context.page_height
+    )
+    attested: Optional[str] = None
+    if verdict.ok and not args.no_attest:
+        digest = hashlib.sha256(payload).hexdigest()
+        try:
+            attested = str(
+                visual_proof.write_attestation(
+                    args.out, verdict, repo, context.url, capture_sha256=digest
+                )
+            )
+        except visual_proof.UnboundProofError as exc:
+            raise DevError(str(exc), exit_code=EXIT_UNBOUND_PROOF) from exc
+        except OSError as exc:
+            raise DevError(
+                f"captured {args.out} but could not write the proof record: {exc}",
+                # The capture is good; a full disk or unwritable cache is not fixed by
+                # retaking it, so this must not read as "bad capture" to an automated caller.
+                exit_code=EXIT_UNBOUND_PROOF,
+            ) from exc
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ok": verdict.ok,
+                    "capture": str(Path(args.out).resolve()),
+                    "width": metrics.width,
+                    "height": metrics.height,
+                    "uniform_frac": round(metrics.uniform_frac, 4),
+                    "largest_band_px": metrics.largest_band,
+                    "band_frac": round(metrics.band_frac, 4),
+                    "reasons": list(verdict.reasons),
+                    "attestation": attested,
+                },
+                indent=2,
+            )
+        )
+    elif verdict.ok:
+        print(
+            f"captured {metrics.width}x{metrics.height} -> {args.out} "
+            f"(largest blank band {metrics.largest_band}px, {metrics.band_frac:.1%})"
+        )
+        print(f"proof recorded: {attested}" if attested else "proof not recorded (--no-attest)")
+    else:
+        print(f"capture rejected - no proof written: {args.out}", file=sys.stderr)
+        for reason in verdict.reasons:
+            print(f"  - {reason}", file=sys.stderr)
+
+    return 0 if verdict.ok else EXIT_BAD_CAPTURE
 
 
 def _cmd_env(args: argparse.Namespace) -> int:

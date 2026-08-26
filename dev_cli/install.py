@@ -36,7 +36,11 @@ description: >-
   Project-scoped dev/e2e process runner. Runs a repo's `rig.yaml` scripts and manages
   background dev servers / e2e jobs, per project. Use INSTEAD of raw `pkill`/`lsof`/`ps` for
   dev-process cleanup and instead of hand-rolled test/e2e invocation. Commands:
-  `dev start|list|status|logs|run <script>|has-script|stop|e2e|env`. `dev stop` is
+  `dev start|list|status|logs|run <script>|has-script|stop|e2e|shot|env`. `dev shot` captures a
+  screenshot with a scroll sweep, refuses a blank or wrong-sized capture, and records
+  machine-checked visual proof bound to the staged change (process discipline, not a
+  security boundary) — use it to satisfy the visual-proof
+  commit gate. `dev stop` is
   safe-by-default — it SIGTERMs only a known dev/e2e runner scoped to the current repo (or
   `DEV_PROJECT_PATHS`). Exit 2 = invalid args/unsafe stop target; 127 = missing platform helper.
 metadata:
@@ -61,6 +65,7 @@ dev status [target]                               # configured/running/stale + l
 dev logs <target> [--tail N]                      # tail a configured target log
 dev e2e run|status|logs|stop <target>             # first-class e2e-job aliases
 dev stop <target> | --pid | --port | --pgid       # validated SIGTERM (dev tool + project-scoped)
+dev shot <url> --out <path.png>                   # capture + verify + record visual proof (exit 3 bad capture, 4 unbound)
 dev env --add-project <path>                      # print an export line for a multi-project session
 dev --help                                        # full usage
 ```
