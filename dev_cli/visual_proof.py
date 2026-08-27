@@ -484,7 +484,15 @@ def _worktree_dirty(repo: str | Path, timeout_s: int = 10) -> bool | None:
 
 
 def proof_dir() -> Path:
-    return Path(os.path.expanduser(os.environ.get("VISUAL_PROOF_DIR", DEFAULT_PROOF_DIR)))
+    # `.get(..., DEFAULT)` alone does NOT apply the default for VISUAL_PROOF_DIR=""
+    # (explicitly set to empty, not unset) — os.environ.get returns "" itself, so the
+    # default arg never kicks in, and Path("") resolves to dev-cli's own cwd rather than
+    # the intended proof directory. The consumer side (agent-tools' visual-proof-gate hook)
+    # normalizes empty-string the same way; this producer must match or the two sides
+    # silently disagree on where the attestation lives — `dev shot` would write into cwd
+    # while the gate keeps searching the default cache dir, and a real capture would still
+    # get blocked.
+    return Path(os.path.expanduser(os.environ.get("VISUAL_PROOF_DIR") or DEFAULT_PROOF_DIR))
 
 
 def write_attestation(

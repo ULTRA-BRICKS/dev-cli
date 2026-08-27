@@ -76,6 +76,41 @@ def _assemble(width: int, height: int, raw: bytes) -> bytes:
     )
 
 
+# --- proof_dir env resolution ---------------------------------------------------------
+
+
+def test_proof_dir_unset_visual_proof_dir_uses_default(monkeypatch) -> None:
+    """Baseline: VISUAL_PROOF_DIR genuinely unset resolves to the documented default."""
+    import os
+
+    monkeypatch.delenv("VISUAL_PROOF_DIR", raising=False)
+    expected = Path(os.path.expanduser(visual_proof.DEFAULT_PROOF_DIR))
+    assert visual_proof.proof_dir() == expected
+
+
+def test_proof_dir_empty_visual_proof_dir_falls_back_to_default(monkeypatch) -> None:
+    """VISUAL_PROOF_DIR="" (explicitly set to empty, not unset) must resolve to the SAME
+    default path as unset — not Path(""), which is dev-cli's own cwd.
+    `os.environ.get("VISUAL_PROOF_DIR", DEFAULT)` alone would NOT apply the default here —
+    .get()'s default only fires when the key is ABSENT, and an explicitly-empty value IS
+    present. This is the producer-side half of a contract with agent-tools'
+    visual-proof-gate hook, whose PROOF_DIR normalizes empty-string the same way: if the two
+    sides disagree, `dev shot` writes its attestation into cwd while the gate keeps
+    searching the default cache dir, and a real capture still gets blocked."""
+    import os
+
+    monkeypatch.setenv("VISUAL_PROOF_DIR", "")
+    expected = Path(os.path.expanduser(visual_proof.DEFAULT_PROOF_DIR))
+    assert visual_proof.proof_dir() == expected
+
+
+def test_proof_dir_honors_a_real_override(tmp_path: Path, monkeypatch) -> None:
+    """A genuine (non-empty) override must still be honored — the empty-string fix must not
+    regress the normal override path."""
+    monkeypatch.setenv("VISUAL_PROOF_DIR", str(tmp_path / "custom-proofs"))
+    assert visual_proof.proof_dir() == tmp_path / "custom-proofs"
+
+
 # --- measurement ---------------------------------------------------------------------
 
 
