@@ -1,0 +1,22 @@
+#!/bin/sh
+# dev-cli's own repo-local pre-merge-commit hook — mirrors pre-commit's quorum gate + global
+# dispatcher stages (NOT the review-before-commit gate — that one is `git commit`-specific by
+# design and has no merge-commit equivalent here). `pre-commit` alone does NOT fire for `git
+# merge` when git creates a real merge commit (only for a direct `git commit`), so without
+# this a rules.yaml loosening committed on an unwired worktree/branch could merge into a wired
+# one with no quorum check at all. check_rules_quorum.py itself is commit-shape-agnostic (it
+# only reads `git diff --cached --name-only` and the current branch/HEAD), so the same script
+# works unmodified for both hook events. KNOWN GAP: a FAST-FORWARD merge (git's default when
+# possible) creates no commit and runs NEITHER hook — this file narrows the bypass window, it
+# does not close it. See AGENTS.md's quorum-gate section for the fuller caveat.
+set -eu
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+DISPATCHER="${XDG_CONFIG_HOME:-$HOME/.config}/git/run-global-hooks"
+
+# 1. This repo's own rules.yaml-quorum gate.
+python3 "$HOOK_DIR/check_rules_quorum.py"
+
+# 2. Global hooks (secret-scan, etc.), if this machine's dispatcher is present.
+[ -x "$DISPATCHER" ] && { "$DISPATCHER" pre-merge-commit "$@" || exit $?; }
+
+exit 0

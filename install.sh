@@ -81,6 +81,45 @@ chmod +x "$ENTRY_PATH"
 ln -sfn "$ENTRY_PATH" "$BIN/$TOOL"
 echo "dev: symlinked $BIN/$TOOL -> $ENTRY_PATH"
 
+# ── wire this repo's own commit gate (rules.yaml quorum) ───────────────────────
+# Only meaningful for a git checkout of dev-cli itself ($SRC), never for a project that
+# merely consumes `dev` at runtime. scripts/git-hooks/pre-commit blocks a commit that
+# touches rules.yaml unless the task code has a passed review-cli quorum — see AGENTS.md
+# "rules.yaml requires review quorum" and scripts/git-hooks/check_rules_quorum.py.
+#
+# Wired via a WORKTREE-SCOPED `core.hooksPath` (`extensions.worktreeConfig=true` +
+# `git config --worktree core.hooksPath scripts/git-hooks`) pointed at the in-repo,
+# committed scripts/git-hooks/ dir. Two things were tried and rejected first, both verified
+# live during development, not just reasoned about:
+#   1. A plain (non---worktree) `git config core.hooksPath` — this setting lives in the
+#      REPO-SHARED .git/config, so setting it in one worktree changed it for every sibling
+#      worktree of dev-cli, including the main checkout (which doesn't have
+#      scripts/git-hooks/ checked out on every branch). `--worktree` scopes the value to
+#      $GIT_DIR/config.worktree instead, with no such leak.
+#   2. Installing directly into this checkout's worktree-specific hook slot
+#      ($(git rev-parse --absolute-git-dir)/hooks/pre-commit) — this looked promising (each
+#      worktree gets its own $GIT_DIR/hooks/) but vanilla git only reads hooks from
+#      $GIT_COMMON_DIR/hooks/ or core.hooksPath; a linked worktree's own hooks/ subdirectory
+#      is never consulted. Confirmed by writing an always-fail hook there and committing:
+#      git accepted the commit as if the hook didn't exist.
+# `core.hooksPath` (worktree-scoped) is the one mechanism that is both git-native and
+# correctly isolated per worktree.
+# Guard against a non-git $SRC (e.g. an extracted tarball snapshot that still has
+# scripts/git-hooks/ present but no .git at all) — without this, `git config` inside the
+# subshell below fails under `set -e` mid-install, after the dev symlink is already created
+# but before install-skill runs, with a cryptic "fatal: not in a git directory" instead of a
+# clean skip.
+if [[ -f "$SRC/scripts/git-hooks/pre-commit" ]] && git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  chmod +x "$SRC/scripts/git-hooks/pre-commit" "$SRC/scripts/git-hooks/pre-merge-commit" \
+    "$SRC/scripts/git-hooks/check_rules_quorum.py"
+  (
+    cd "$SRC"
+    git config extensions.worktreeConfig true
+    git config --worktree core.hooksPath scripts/git-hooks
+  )
+  echo "dev: wired $SRC's own commit gate (worktree core.hooksPath -> scripts/git-hooks)"
+fi
+
 # ── register skill ────────────────────────────────────────────────────────────
 if ! "$BIN/$TOOL" install-skill; then
   echo "  WARNING: '$TOOL install-skill' failed — $TOOL is installed but agents may not"

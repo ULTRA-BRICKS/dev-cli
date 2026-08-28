@@ -9,8 +9,8 @@ Rules for agents working in this repo. English only (no Cyrillic anywhere in rep
 safe-by-default process control. It is a peer to `pm-cli` / `research-cli` / `tg-cli`, spun out of
 the agent-tools umbrella (it lived at `lib/agenttools_dev`).
 
-Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env` (+ `install-skill`,
-`--version`, the hidden `--agenttools-dev-probe`).
+Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env|kill-orphan|clean-logs`
+(+ `install-skill`, `--version`, the hidden `--agenttools-dev-probe`).
 
 ## Hard rules
 
@@ -37,6 +37,30 @@ Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env` (+ `ins
 - **The `_UV_RUN_*` option tables mirror agent-tools' `orchestrator-stays-thin`.** The uv-run
   flag classification in `cli.py` is intentionally duplicated from that agent-hook (they gate the
   same class of inline-code smuggling). Keep the two in sync; a note in each points at the other.
+- **`dev kill-orphan` / `dev clean-logs` never accept a free-text pattern; `rules.yaml` edits
+  require review quorum to COMMIT.** These commands exist so agents stop generating ad hoc
+  `pkill -f <pattern>` / `rm -f <path>` one-liners that need interactive Bash-permission
+  approval for every call — the two commands are safe by construction instead: `dev kill-orphan
+  --harness <name> --worker <w> [--instance <i>]` and `dev clean-logs <path> [<path> ...]` only
+  accept structured fields, which `dev_cli/cleanup_rules.py` validates against `rules.yaml`
+  before anything is killed or deleted (an unscoped/under-specified target is refused, not
+  best-effort-warned). `rules.yaml` — and `dev_cli/cleanup_rules.py`'s validation/selection
+  functions, an EQUAL safety boundary — cannot be COMMITTED with a change unless the task
+  code has a passed review-cli quorum: `scripts/git-hooks/check_rules_quorum.py` (wired via a
+  worktree-scoped `core.hooksPath`, set by `install.sh`) re-runs `review task <CODE> --check`
+  live, for both `pre-commit` and `pre-merge-commit`. See `rules.yaml`'s own header comment
+  for the full mechanism, and `dev_cli/cleanup_rules.py`'s module docstring for why the
+  match-selection logic (not just the regex-building) lives in the gated file too.
+  **Known limits — this is a commit-time speed bump, not a runtime sandbox:** (1) it gates
+  `git commit`/normal `git merge`, not a live edit to the WORKING TREE — an agent that edits
+  `rules.yaml` or `cleanup_rules.py` with a file tool and runs `dev` without committing sees
+  the edited version immediately, no hook involved; (2) a FAST-FORWARD merge (git's default
+  when possible) creates no commit and runs neither hook; (3) an already-passed task code on
+  a fresh, code-less branch (e.g. `git checkout -b tweak-1 <old-branch>`) satisfies the check
+  without a new review of the new diff, because `review task <CODE> --check` is bound to the
+  task code's history, not to the specific staged content. Treat it as raising the bar for an
+  accidental or drive-by loosening, not as an unforgeable guarantee against a determined
+  attacker who already has commit access to this repo.
 
 ## Style
 
