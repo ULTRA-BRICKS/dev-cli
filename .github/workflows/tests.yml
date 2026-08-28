@@ -38,7 +38,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install ruff
+        # Pinned — an unpinned `pip install ruff` makes CI non-deterministic: a new release
+        # can enable new default rules and flip a previously-green PR red with no code change
+        # (discovered 2026-08-28; see AGENTS.md "Tests" for the incident and rationale). The
+        # ENFORCED source of truth is `[tool.ruff] required-version` in pyproject.toml — ruff
+        # hard-fails on a mismatch; this line and the README/AGENTS.md copies are for a human
+        # reading CI/docs, kept in sync by tests/test_ruff_pin_sync.py. Bumping the version
+        # means updating pyproject.toml + fixing new-rule fallout in the same change, not a
+        # side effect of GitHub Actions silently fetching "latest" on every run.
+        run: pip install ruff==0.15.18
       - name: ruff check
         run: ruff check .
 

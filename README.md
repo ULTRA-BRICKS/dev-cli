@@ -235,5 +235,5 @@ token `agenttools-dev`) and the `.agenttools-dev` per-worktree state-dir name. D
 
 ```bash
 python -m pytest -q      # hermetic; monkeypatches all process/signal helpers, no real processes
-ruff check .
+ruff check .              # match CI's pinned version: pip install ruff==0.15.18 (see .github/workflows/tests.yml)
 ```

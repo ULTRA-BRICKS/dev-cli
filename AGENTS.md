@@ -75,4 +75,7 @@ Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env|kill-orp
 - `python -m pytest -q` — the unit suite. Fast, hermetic; every process/signal/`ps`/`lsof` helper
   is monkeypatched, so tests never touch real processes. `conftest.py` puts the repo root +
   `vendor/` on `sys.path` so the suite runs straight from a checkout with no install step.
-- `ruff check .` — lint (skips `vendor/`).
+- `ruff check .` — lint (skips `vendor/`). Match CI's pinned version — `pip install
+  ruff==0.15.18` — before trusting a local pass/fail; ruff is unpinned upstream by default
+  and a newer release can enable new default rules a local `pip install ruff` picks up
+  before CI's pin does, giving a false red/green mismatch (see `.github/workflows/tests.yml`).
