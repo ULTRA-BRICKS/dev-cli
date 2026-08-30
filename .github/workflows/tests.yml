@@ -38,7 +38,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install ruff
+        # Pinned (not a floating `pip install ruff`): an unpinned install broke this gate
+        # on an unrelated docs-only PR when a new ruff release's default rule set flagged
+        # 72 pre-existing violations that were never actually fixed - CI tooling like a
+        # linter should be pinned exactly, unlike an application runtime dependency, so a
+        # new release's rule changes are a deliberate bump, not a surprise red build.
+        run: pip install ruff==0.15.18
       - name: ruff check
         run: ruff check .
 
