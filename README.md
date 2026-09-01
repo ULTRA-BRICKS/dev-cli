@@ -237,3 +237,20 @@ token `agenttools-dev`) and the `.agenttools-dev` per-worktree state-dir name. D
 python -m pytest -q      # hermetic; monkeypatches all process/signal helpers, no real processes
 ruff check .              # match CI's pinned version: pip install ruff==0.15.18 (see .github/workflows/tests.yml)
 ```
+
+<!-- rig:ecosystem-block -->
+## Ecosystem
+
+Part of the [HyperIDE.ai](https://hyperide.ai) agent toolchain:
+
+- **[tg-cli](https://github.com/alex-mextner/tg-cli)** — simple Telegram CLI to send messages, photos & files, and a two-way agent bridge (reports, Q→buttons, voice/rich)
+- **[review-cli](https://github.com/alex-mextner/review-cli)** — multi-model read-only code review from one command: diff review, cited quorum, brainstorm, visual review, and interactive spec-review tooling. Read-only, CLI-first, harness-agnostic.
+- **[agent-tools](https://github.com/alex-mextner/agent-tools)** — the shared catalog `rig` applies: portable agent skills, agent-hooks, the global git-hook dispatcher, CI gates, and MCP servers
+- **[draw-cli](https://github.com/alex-mextner/draw-cli)** — text-to-image via Hugging Face
+- **[3d-cli](https://github.com/alex-mextner/3d-cli)** — scriptable CLI for the full 3D FDM lifecycle: modeling, mesh repair, slicing, and print monitoring
+- **[task-cli](https://github.com/alex-mextner/task-cli)** — enforced ticket-system CLI for agents (GitHub Issues / Linear): acceptance criteria, motivation, and user-impact gates before work starts
+- **[research-cli](https://github.com/alex-mextner/research-cli)** — multi-provider research / panel CLI: puts a question to a panel of models, each through a research lens, then synthesizes one attributed, fact-checked note
+- **[pm-cli](https://github.com/alex-mextner/pm-cli)** — autonomous project-manager coordinator over the task/tg/rig ecosystem: keeps a work queue as a deterministic projection of an append-only event log, reconciling on unforgeable evidence rather than dispatching or editing code itself
+- **[rig-cli](https://github.com/alex-mextner/rig-cli)** — sets up a repo (and a dev machine) from a committed `rig.yaml`: skills, agent-hooks, git-hook dispatcher, CI gates, MCP, and the personal CLI ecosystem itself
+- **[hyperide.ai](https://hyperide.ai)** — Figma replacement inside VS Code. Edit React components directly through AST/LSP without AI hallucinations, token waste, or context-window limits. Works for indie vibe-coding and for enterprise teams with split design/dev roles.
+<!-- /rig:ecosystem-block -->
