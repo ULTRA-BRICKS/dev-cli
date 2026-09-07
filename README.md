@@ -45,6 +45,7 @@ dev stop <target>
 dev stop --pid <pid>
 dev stop --port <port>
 dev stop --pgid <pgid>
+dev shot <url> --out <path.png> [--viewport WxH] [--repo <dir>] [--no-attest] [--json]
 dev env --add-project <path>
 dev kill-orphan --harness <name> --worker <w> [--instance <i>]
 dev clean-logs <path> [<path> ...]

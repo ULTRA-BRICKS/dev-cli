@@ -9,7 +9,7 @@ Rules for agents working in this repo. English only (no Cyrillic anywhere in rep
 safe-by-default process control. It is a peer to `pm-cli` / `research-cli` / `tg-cli`, spun out of
 the agent-tools umbrella (it lived at `lib/agenttools_dev`).
 
-Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env|kill-orphan|clean-logs`
+Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|shot|env|kill-orphan|clean-logs`
 (+ `install-skill`, `--version`, the hidden `--agenttools-dev-probe`).
 
 ## Hard rules
@@ -61,6 +61,14 @@ Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|env|kill-orp
   task code's history, not to the specific staged content. Treat it as raising the bar for an
   accidental or drive-by loosening, not as an unforgeable guarantee against a determined
   attacker who already has commit access to this repo.
+- **`dev shot` is the ONLY writer of visual-proof attestations, and that is the whole design.**
+  The caller asks for a capture; `dev_cli/visual_proof.py` performs it (viewport, scroll sweep,
+  full-page), measures it, and writes a record only if it passes. A caller that could write the
+  record itself could attest to a blank page — which is exactly what happened under the old
+  `touch`-a-marker contract. Never add a flag that writes an attestation without capturing and
+  measuring, and never relax `THRESHOLDS` without re-running the two real-capture tests: they
+  encode a genuine 10x separation (an unswept capture with a 42%-of-page blank band vs a swept
+  one at 4%) and exist to stop exactly that loosening.
 
 ## Style
 
