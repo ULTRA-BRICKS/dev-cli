@@ -45,16 +45,36 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterator
 
-ATTEST_VERSION = 1
+ATTEST_VERSION = 2
+"""Bumped from 1: what "featureless" means changed, and so did ``worktree_dirty``.
+
+A version-1 record could have been written for a gradient-disguised blank page (the old
+exact-equality measure scored one 0% featureless) or with untracked renderer inputs present
+(``git diff`` never listed them). Those records are not equivalent to what this version
+writes, and a consumer re-measuring the referenced capture would not reproduce their metrics.
+Version 2 also records ``repo`` as the resolved repository root rather than the directory the
+tool was invoked from, so a v1 consumer comparing that field needs to know which it is holding.
+"""
 DEFAULT_PROOF_DIR = "~/.cache/agent-tools/visual-proof"
 
 # Grounded in two real captures of the same page, one taken without a scroll sweep and one
-# with. Uniform-row COUNT barely separates them (52.4% bad vs 19.5% good) because a landing
-# page legitimately has wide bands of background. The largest CONTIGUOUS uniform band
-# separates them by 10x (42.3% vs 4.1%) and is therefore the primary check.
+# with. Featureless-row COUNT separates them only ~1.4x (68.3% bad vs 48.5% good) because a
+# landing page legitimately has wide bands of background. The largest CONTIGUOUS featureless
+# band separates them ~6x (42.7% vs 6.9%) and is therefore the primary check.
+#
+# Known tradeoff: a page whose hero is a full-width pure gradient with no text over it counts
+# as featureless there by design - that is the same signal a gradient-disguised blank gives,
+# and it cannot be told apart from the pixels alone. Such a page must keep its gradient run
+# under max_band_frac or pass --no-attest.
 THRESHOLDS = {
-    "max_band_frac": 0.15,  # bad=0.423  good=0.041
-    "max_uniform_frac": 0.80,  # bad=0.524  good=0.195 - a backstop for near-blank pages
+    # The discriminator. One long featureless run means a section never rendered, and it
+    # separates the real captures ~6x where the whole-page fraction separates them ~1.2x.
+    "max_band_frac": 0.15,  # bad=0.427  good=0.069
+    # A backstop for the page that is featureless ALL OVER without one long run - ten broken
+    # image placeholders interleaved with text, say. Set BELOW the bad capture, so that one
+    # fails both checks rather than only the band: every point of slack here is room for a
+    # scattered-blank page to pass, and the good capture leaves 0.165 of headroom.
+    "max_uniform_frac": 0.65,  # bad=0.683  good=0.485
     "min_height": 200,
     "min_width": 200,
 }
@@ -180,12 +200,63 @@ def _unfilter(raw: bytes, width: int, height: int, bpp: int) -> Iterator[bytes]:
         prev = line
 
 
+FLAT_DELTA = 6
+"""Largest adjacent-pixel jump a row may contain and still count as featureless.
+
+Rendered content - text, borders, card edges - produces abrupt local jumps far above this.
+A gradient moves by 0-1 per pixel across a 1440px span, so it stays under it.
+
+Known limit: a border under this contrast - a 1px `#F9FAFB` rule on white is a delta of 6 -
+is indistinguishable from a gradient by this measure, so a tall element outlined in a very
+light grey can still read as one featureless band. Raising the delta to admit it would start
+admitting real gradients, which is the failure this exists to catch; the band threshold is
+the safety margin for it.
+
+Meaningful ONLY for 8-bit direct-colour channels, where a byte is a linear intensity. That
+is not an assumption - ``measure_png_bytes`` raises on any other bit depth, and on palette
+images (where adjacent indices can be white and black), before reaching here.
+"""
+
+
+def _row_is_flat(row: bytes, bpp: int) -> bool:
+    """True when the row only ever varies gradually, so it carries no rendered content.
+
+    Exact-equality uniformity misses the case this exists for: a blank page under a CSS
+    gradient has no two identical pixels, yet shows nothing. Judging LOCAL change instead of
+    global range separates the two - a gradient's neighbours differ by ~1, an edge's by tens.
+
+    EVERY adjacent pair is examined, deliberately. Sampling a subset - even rotating which
+    columns are sampled per row - aliases: a 1px rule running diagonally shifts one column per
+    row in lockstep with the rotation and evades every probe, so a rendered page reads as one
+    long blank band. Any fixed pattern has some content pattern that hides in it.
+
+    Cost is kept off the common path by testing each channel's global range first, at C speed.
+    A solid or near-solid row settles there without a per-pixel walk, and a content row exits
+    on its first real edge; only a genuine full-width gradient walks far.
+    """
+    for c in range(bpp):
+        chan = row[c::bpp]
+        if max(chan) - min(chan) > FLAT_DELTA:
+            break
+    else:
+        return True  # every channel varies less overall than one allowed step
+    for c in range(bpp):
+        chan = row[c::bpp]
+        prev = chan[0]
+        for cur in chan:
+            if cur - prev > FLAT_DELTA or prev - cur > FLAT_DELTA:
+                return False
+            prev = cur
+    return True
+
+
 def measure_png(path: str | Path) -> CaptureMetrics:
     """Decode a PNG and report its geometry plus how much of it is featureless.
 
-    A row counts as uniform when every pixel in it is identical. ``largest_band`` is the
-    longest run of consecutive uniform rows - the signal that a whole section failed to
-    render, as opposed to ordinary page background.
+    A row counts as featureless when it is one pixel repeated, or when it varies only
+    gradually (see :func:`_row_is_flat`). ``largest_band`` is the longest run of consecutive
+    such rows - the signal that a whole section failed to render, as opposed to ordinary page
+    background.
     """
     try:
         data = Path(path).read_bytes()
@@ -252,9 +323,9 @@ def measure_png_bytes(data: bytes, source: str = "<bytes>") -> CaptureMetrics:
     largest_band = 0
     current_band = 0
     for row in _unfilter(raw, width, height, bpp):
-        # A uniform row is exactly its first pixel repeated: one C-level bytes compare,
-        # far cheaper than walking pixels in Python.
-        if row == row[:bpp] * width:
+        # Exact repeat first: one C-level bytes compare, cheaper still than the range test,
+        # and it settles the ordinary solid-background row immediately.
+        if row == row[:bpp] * width or _row_is_flat(row, bpp):
             uniform_rows += 1
             current_band += 1
             if current_band > largest_band:
@@ -363,11 +434,11 @@ def staged_diff_hash(repo: str | Path, timeout_s: int = 10) -> str | None:
     return hashlib.sha256(proc.stdout).hexdigest()
 
 
-def _worktree_dirty(repo: str | Path, timeout_s: int = 10) -> bool | None:
-    """True when unstaged changes exist, ``None`` when git cannot be asked."""
+def _git_toplevel(repo: str | Path, timeout_s: int = 10) -> Path | None:
+    """Resolved repository root for ``repo``, or None when git cannot answer."""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo), "diff", "--name-only"],
+            ["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
             capture_output=True,
             timeout=timeout_s,
             check=False,
@@ -376,7 +447,40 @@ def _worktree_dirty(repo: str | Path, timeout_s: int = 10) -> bool | None:
         return None
     if proc.returncode != 0:
         return None
-    return bool(proc.stdout.strip())
+    root = proc.stdout.decode("utf-8", "replace").strip()
+    if not root:
+        return None
+    try:
+        return Path(root).resolve()
+    except OSError:
+        return None
+
+
+def _worktree_dirty(repo: str | Path, timeout_s: int = 10) -> bool | None:
+    """True when unstaged changes exist, ``None`` when git cannot be asked.
+
+    Counts UNTRACKED files too. ``git diff`` never lists them, so a page rendered from a
+    brand-new asset or generated config - the common case when adding an image - would
+    otherwise record ``worktree_dirty: false`` while the staged commit lacks the very file
+    the capture shows.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=normal"],
+            capture_output=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    # Porcelain v1 is "XY path": X is the index status, Y the worktree's. A line is only
+    # STAGED-clean when Y is a space, so anything else - modification or "??" - is dirt.
+    for line in proc.stdout.decode("utf-8", "replace").splitlines():
+        if len(line) >= 2 and line[1] != " ":
+            return True
+    return False
 
 
 def proof_dir() -> Path:
@@ -424,6 +528,15 @@ def write_attestation(
             "cannot be bound to a staged change. Stage the change first, and run from inside "
             "the repository."
         )
+    repo_root = _git_toplevel(repo)
+    if repo_root is None:
+        # Falling back to the raw invocation directory would silently reintroduce the very
+        # mismatch this records the root to avoid - and intermittently, since git only fails
+        # here on timeout or error. A record with the wrong repo is worthless; say so now.
+        raise UnboundProofError(
+            f"cannot resolve the repository root of {repo} - the capture is fine, but a proof "
+            "record naming the wrong directory would be rejected later with no explanation."
+        )
     target_dir.mkdir(parents=True, exist_ok=True)
     digest = capture_sha256 or hashlib.sha256(capture_path.read_bytes()).hexdigest()
     record = {
@@ -437,7 +550,11 @@ def write_attestation(
         # edits present at capture time are invisible to the binding, so record whether any
         # existed and let the gate decide what to do about it.
         "worktree_dirty": _worktree_dirty(repo),
-        "repo": str(Path(repo).resolve()),
+        # The REPOSITORY ROOT, not whatever directory this ran from. The gate resolves its own
+        # side the same way, so a `git commit` issued from a subdirectory still matches;
+        # recording the raw cwd would make an otherwise valid record unusable from anywhere
+        # but the root.
+        "repo": str(repo_root),
         "url": url,
         "metrics": asdict(metrics),
     }

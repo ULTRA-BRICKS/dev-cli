@@ -40,7 +40,7 @@ from dev_cli.visual_proof import (  # noqa: E402
 )
 
 # Committed 600px-wide, every-4th-row slices of two REAL captures of the same page. The slice
-# preserves the metrics that matter exactly (band 42.3% bad / 4.2% good, same as full-res) at
+# preserves the metrics that matter exactly (band 42.9% bad / 6.9% good, same as full-res) at
 # ~100KB each. They live in the repo rather than a scratch directory ON PURPOSE: AGENTS.md
 # makes "re-run the two real-capture tests" the precondition for touching THRESHOLDS, and a
 # fixture that silently skips on every machine but one would make that rule unenforceable.
@@ -91,12 +91,14 @@ def test_all_blank_page_is_fully_uniform(tmp_path: Path) -> None:
 def test_textured_page_has_no_uniform_rows(tmp_path: Path) -> None:
     p = tmp_path / "noise.png"
     p.write_bytes(_png(400, 400, lambda y: (y % 251, (y * 7) % 251, (y * 13) % 251)))
-    # every row is a solid colour -> uniform. Use a per-pixel varying row instead.
+    # every row is a solid colour -> uniform. Use a per-pixel varying row instead. The stride
+    # must be LARGE: featureless is judged by adjacent-pixel change, so a +1-per-pixel ramp is
+    # a gradient (correctly flat), not the content this test needs.
     raw = bytearray()
     for y in range(400):
         raw.append(0)
         for x in range(400):
-            raw.extend(bytes(((x + y) % 251, x % 251, y % 251)))
+            raw.extend(bytes(((x * 127) % 256, (y * 131) % 256, (x * 89 + y) % 256)))
     p.write_bytes(_assemble(400, 400, bytes(raw)))
     m = measure_png(p)
     assert m.uniform_rows == 0
@@ -159,7 +161,10 @@ def test_every_png_filter_type_reconstructs_identically(tmp_path: Path, ftype: i
     blank capture. Every filter must reconstruct the same image, or that guard is hollow."""
 
     def pixels(y: int, x: int):
-        return (255, 255, 255) if 40 <= y < 90 else ((x * 3) % 251, y % 251, (x + y) % 251)
+        # Stride by ~half the channel range so ADJACENT pixels jump hard. Featureless is judged
+        # by LOCAL change now, so a gentle ramp is correctly flat and cannot stand in for
+        # content here.
+        return (255, 255, 255) if 40 <= y < 90 else ((x * 127) % 256, (y * 131) % 256, 0)
 
     p = tmp_path / f"f{ftype}.png"
     p.write_bytes(_encode_with_filter(60, 120, pixels, ftype))
@@ -276,6 +281,7 @@ def test_write_attestation_refuses_a_failed_verdict(tmp_path: Path, monkeypatch)
     capture = tmp_path / "shot.png"
     capture.write_bytes(_png(400, 400, lambda y: (1, 2, 3)))
     monkeypatch.setattr(visual_proof, "staged_diff_hash", lambda *a, **k: "abc")
+    monkeypatch.setattr(visual_proof, "_git_toplevel", lambda *a, **k: tmp_path)
     bad = visual_proof.Verdict(
         ok=False, reasons=("largest blank band is 4000px",), metrics=_metrics()
     )
@@ -319,6 +325,7 @@ def test_attestation_binds_capture_and_staged_hashes(tmp_path: Path, monkeypatch
     capture = tmp_path / "shot.png"
     capture.write_bytes(_png(400, 400, lambda y: (1, 2, 3)))
     monkeypatch.setattr(visual_proof, "staged_diff_hash", lambda *a, **k: "deadbeef")
+    monkeypatch.setattr(visual_proof, "_git_toplevel", lambda *a, **k: tmp_path)
     out = write_attestation(
         capture, _ok_verdict(), tmp_path, "http://localhost/", directory=tmp_path / "proof"
     )
@@ -573,6 +580,7 @@ def test_attestation_uses_the_digest_it_was_given(tmp_path: Path, monkeypatch) -
     capture = tmp_path / "shot.png"
     capture.write_bytes(_png(400, 400, lambda y: (1, 2, 3)))
     monkeypatch.setattr(visual_proof, "staged_diff_hash", lambda *a, **k: "abc123")
+    monkeypatch.setattr(visual_proof, "_git_toplevel", lambda *a, **k: tmp_path)
     out = write_attestation(
         capture,
         _ok_verdict(),
@@ -742,3 +750,145 @@ def test_shot_json_output_shape(tmp_path: Path, monkeypatch, capsys) -> None:
     assert payload["width"] == 1440
     assert payload["largest_band_px"] == 50
     assert payload["attestation"].endswith("a.json")
+
+
+def test_content_free_horizontal_gradient_is_flat(tmp_path: Path) -> None:
+    """A blank page under a CSS gradient has no two identical pixels, so exact-equality
+    uniformity scored it 0% featureless and handed it an attestation - the precise outcome
+    this feature exists to withhold. Judge local change, and it reads as blank."""
+    raw = bytearray()
+    for _y in range(400):
+        raw.append(0)
+        for x in range(400):
+            v = (x * 255) // 400
+            raw.extend(bytes((v, v, v)))
+    p = tmp_path / "gradient.png"
+    p.write_bytes(_assemble(400, 400, bytes(raw)))
+    m = measure_png(p)
+    assert m.uniform_rows == 400, "a content-free gradient must count as featureless"
+    assert m.largest_band == 400
+
+
+def test_untracked_file_makes_the_worktree_dirty(tmp_path: Path) -> None:
+    """`git diff` never lists untracked files, so a page rendered from a brand-new asset
+    recorded worktree_dirty=false while the staged commit lacked the very file on screen."""
+    import subprocess
+
+    run = lambda *a: subprocess.run(  # noqa: E731
+        ["git", "-C", str(tmp_path), *a], capture_output=True, check=True
+    )
+    run("init", "-q")
+    run("config", "user.email", "t@t")
+    run("config", "user.name", "t")
+    (tmp_path / "a.txt").write_text("a")
+    run("add", "a.txt")
+    run("commit", "-qm", "init")
+    assert visual_proof._worktree_dirty(tmp_path) is False
+
+    (tmp_path / "new-asset.webp").write_text("brand new, never tracked")
+    assert visual_proof._worktree_dirty(tmp_path) is True, "untracked files are worktree dirt"
+
+
+@pytest.mark.parametrize("col", [1, 2, 3, 5, 7, 101, 203, 398])
+def test_a_one_pixel_vertical_rule_is_content_at_every_column(tmp_path: Path, col: int) -> None:
+    """Probe columns rotate per row for this reason. Held fixed, a 1px border falls between
+    samples in EVERY row or in none - so a tall empty bordered element (a textarea, an empty
+    card) became one long featureless band and a correctly rendered page was refused."""
+    raw = bytearray()
+    for _y in range(400):
+        raw.append(0)
+        for x in range(400):
+            raw.extend(bytes((0, 0, 0) if x == col else (255, 255, 255)))
+    p = tmp_path / f"rule{col}.png"
+    p.write_bytes(_assemble(400, 400, bytes(raw)))
+    m = measure_png(p)
+    assert m.band_frac <= visual_proof.THRESHOLDS["max_band_frac"], (
+        f"a 1px rule at x={col} must not read as a blank band"
+    )
+
+
+def test_staged_only_change_is_not_worktree_dirty(tmp_path: Path) -> None:
+    """Pins that column Y of porcelain is what's read, not column X. Checking X would call a
+    staged-and-clean tree dirty - and stage-then-capture-then-attest is the NORMAL flow, so
+    every honest attestation would carry worktree_dirty=true and the field would mean nothing.
+    """
+    run = lambda *a: subprocess.run(  # noqa: E731
+        ["git", "-C", str(tmp_path), *a], capture_output=True, check=True
+    )
+    run("init", "-q")
+    run("config", "user.email", "t@t")
+    run("config", "user.name", "t")
+    (tmp_path / "a.txt").write_text("one")
+    run("add", "a.txt")
+    run("commit", "-qm", "init")
+
+    (tmp_path / "a.txt").write_text("two")
+    run("add", "a.txt")  # staged, worktree matches the index
+    assert visual_proof._worktree_dirty(tmp_path) is False, "staged-and-clean is not dirty"
+
+    (tmp_path / "a.txt").write_text("three")  # now the tree diverges from the index
+    assert visual_proof._worktree_dirty(tmp_path) is True
+
+
+@pytest.mark.parametrize(
+    "name,pixel",
+    [
+        # A 45-degree rule shifts one column per row. Under any per-row rotation of sampled
+        # columns it moves in LOCKSTEP with the rotation and is never sampled, so a rendered
+        # page reads as one long blank band. This is why every adjacent pair is examined.
+        ("diagonal", lambda y, x: (0, 0, 0) if x == y + 2 else (255, 255, 255)),
+        # Regular thin dividers alias with any fixed stride - a table's column rules, say.
+        ("stripes", lambda y, x: (0, 0, 0) if x % 4 == 0 else (255, 255, 255)),
+    ],
+)
+def test_thin_content_is_never_aliased_away(tmp_path: Path, name: str, pixel) -> None:
+    raw = bytearray()
+    for y in range(400):
+        raw.append(0)
+        for x in range(400):
+            raw.extend(bytes(pixel(y, x)))
+    p = tmp_path / f"{name}.png"
+    p.write_bytes(_assemble(400, 400, bytes(raw)))
+    m = measure_png(p)
+    assert m.band_frac <= visual_proof.THRESHOLDS["max_band_frac"], (
+        f"{name}: thin content must not read as a blank band"
+    )
+
+
+def test_attestation_records_the_repo_root_not_the_subdirectory(tmp_path: Path) -> None:
+    """The gate resolves ITS side to the git top-level, so the writer must agree. Recording
+    the invocation directory instead makes every attestation written from a subdirectory
+    unusable - the failure this pins is silent, and the claim is otherwise untested."""
+    repo = tmp_path / "r"
+    (repo / "src").mkdir(parents=True)
+    run = lambda *a: subprocess.run(  # noqa: E731
+        ["git", "-C", str(repo), *a], capture_output=True, check=True
+    )
+    run("init", "-q")
+    run("config", "user.email", "t@t")
+    run("config", "user.name", "t")
+    (repo / "a.txt").write_text("one")
+    run("add", "a.txt")
+
+    capture = tmp_path / "shot.png"
+    capture.write_bytes(_png(400, 400, lambda y: (1, 2, 3)))
+    out = write_attestation(
+        capture, _ok_verdict(), repo / "src", "http://localhost/", directory=tmp_path / "proof"
+    )
+    record = json.loads(out.read_text())
+    assert record["repo"] == str(repo.resolve()), "the record must name the repository root"
+
+
+def test_attestation_refuses_when_the_repo_root_cannot_be_resolved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Falling back to the raw directory would reintroduce the mismatch intermittently, since
+    git only fails here on timeout or error. Refuse loudly instead."""
+    monkeypatch.setattr(visual_proof, "staged_diff_hash", lambda *a, **k: "abc")
+    monkeypatch.setattr(visual_proof, "_git_toplevel", lambda *a, **k: None)
+    capture = tmp_path / "shot.png"
+    capture.write_bytes(_png(400, 400, lambda y: (1, 2, 3)))
+    with pytest.raises(visual_proof.UnboundProofError, match="repository root"):
+        write_attestation(
+            capture, _ok_verdict(), tmp_path, "http://localhost/", directory=tmp_path / "proof"
+        )
