@@ -1,0 +1,103 @@
+# dev-cli cleanup safety rules — consumed by dev_cli/cleanup_rules.py for
+# `dev kill-orphan` / `dev clean-logs`.
+#
+# EDITING THIS FILE REQUIRES A PASSED review-cli QUORUM before the commit lands.
+# scripts/git-hooks/check_rules_quorum.py enforces this locally (wired into this checkout's
+# WORKTREE-SCOPED `core.hooksPath` — `git config --worktree core.hooksPath scripts/git-hooks`
+# — set by install.sh; see that file's own comment for why it must be worktree-scoped, not
+# the repo-shared config): it re-runs `review task <code> --check` against review-cli's own
+# history store at commit time — there is no proof file to hand-write, the check is live
+# every time. It gates BOTH this file and dev_cli/cleanup_rules.py's validation/selection
+# functions (an EQUAL safety boundary — a change there, e.g. relaxing what counts as a valid
+# anchor_flag, needs the same quorum) — see check_rules_quorum.py's INTERPRETER_FILE. See
+# AGENTS.md "dev kill-orphan / dev clean-logs never accept a free-text pattern" for the full
+# mechanism AND its known limits (this is a commit-time speed bump, not a runtime sandbox).
+#
+# Every entry below must be traceable to real, evidenced agent behavior (an incident, a
+# sanctioned pattern already documented elsewhere, or genuinely repeated ad hoc commands) —
+# not a guess at what might be needed. Loosening a pattern here (widening a regex, dropping an
+# anchor, adding an unscoped family) is exactly the kind of change the quorum gate exists to
+# slow down.
+
+version: 1
+
+# kill_families: each entry is consumed by `dev kill-orphan --harness <name> --worker <w>
+# [--instance <i>]`. There is no free-text pattern argument anywhere in this command — the
+# caller supplies only the structured fields a family declares, so an unscoped kill (e.g. a
+# bare substring match on "hvsc-") cannot be expressed through this command at all.
+#
+# Matching contract (dev_cli/cleanup_rules.py `_build_id_matcher`): a candidate process's full
+# command line must contain `enumerate_argv_contains`, AND must match `anchor_flag` followed by
+# an optional path prefix and the id built from `id_template`. This mirrors the sanctioned
+# argv-anchored reap in ext-test-projects/CLAUDE.md — never a raw `pkill -f <substring>`, which
+# has no anchor and can match an unrelated process by accident.
+kill_families:
+  - name: vscode-e2e-harness
+    description: >
+      Isolated VS Code Extension Development Host instances launched by the
+      ext-test-projects Playwright E2E harness (launchVSCode / hvsc-<worker>-<instance>
+      user-data-dir naming, e2e/setup/electron-app.ts). Each worker slot holds at most one
+      live instance by design (assertNoWorkerProcessConflicts refuses a conflicting launch),
+      so reaping a whole worker slot before a relaunch is a sanctioned, scoped cleanup — see
+      ext-test-projects/CLAUDE.md "Stop previous run before starting a new one — scope the
+      reap to YOUR OWN worker index, never a blanket sweep" (HYP-1400, 2026-08-28). That same
+      incident is why this rule anchors on --user-data-dir= and never matches the Electron/Code
+      binary name or a bare "hvsc-" substring: both false-positive onto a build watcher under
+      /tmp/hvsc-cache, a developer's own F5 extension-debug session, the user's real editor, or
+      a sibling agent's live run at a different worker index.
+    enumerate_argv_contains: "--extensionDevelopmentPath"
+    anchor_flag: "--user-data-dir="
+    id_template: "hvsc-{worker}-{instance}"
+    worker:
+      required: true
+      pattern: '^[0-9]{1,2}$'
+      description: "the E2E worker/slot index (0-11 today; see ext-test-projects CLAUDE.md)"
+    instance:
+      required: false
+      pattern: '^[0-9a-f]{8}$'
+      description: >
+        Optional. When given, targets exactly one launch — the safest form, matching a full
+        `hvsc-<worker>-<8-hex>` user-data-dir (Alex's tg screenshots 1-2: pkill -9 -f
+        "hvsc-2-19fd16aa" / "hvsc-0-4542a0c8"). When omitted, targets the whole worker slot —
+        matches the sanctioned "reap before relaunch" case, where a crashed prior run's hex
+        suffix is unknown; still anchored to --user-data-dir= and one specific worker index,
+        never a bare substring.
+    method: sigkill
+    grace_seconds: 0
+    # Verified live against a running harness instance (2026-08-28, `ps -axww -o
+    # pid=,ppid=,command=` against a real hvsc-7-* launch): Code Helper (GPU/renderer/
+    # utility/plugin) processes DO inherit --user-data-dir= from the main Electron process,
+    # but NONE of them carry --extensionDevelopmentPath= — only the top-level process does.
+    # Since enumerate_argv_contains requires --extensionDevelopmentPath, helpers are excluded
+    # regardless of anchor matching, so one worker slot's leftover instance is normally
+    # exactly ONE matched process. Deliberately NOT the ext-test-projects/CLAUDE.md
+    # machine-wide "max 12 windows" budget — that describes ALL worker slots combined, not
+    # one slot's expected match count; 12 here would have let the exact broad-match blast
+    # radius review flagged (screenshots 3-4) pass silently. 3 leaves headroom for a rare
+    # multi-window leftover from a crashed run.
+    max_matches: 3
+
+# clean_log_rules: each entry is consumed by `dev clean-logs <path> [<path> ...]`. Paths are
+# explicit only — glob patterns are refused outright (dev_cli/cleanup_rules.py
+# `_resolve_one_log_path`) — and each path must resolve (after following symlinks) inside one
+# of `allowed_roots` with a suffix in `allowed_suffixes` before anything is deleted. All paths
+# in one call are validated before any file is removed.
+clean_log_rules:
+  - name: tmp-debug-log
+    description: >
+      Ad hoc debug/run logs agents write under a temp directory while reproducing extension
+      bugs (Alex's tg screenshots 3-4: /tmp/hyp1404-run.log,
+      /tmp/hyp-inspector-focus/run-reload.log). Deleting them is routine cleanup once a repro
+      session ends; nothing outside a temp root is ever in scope.
+    # Only paths under a fixed, code-level allow-list of safe temp roots are ever honored
+    # (dev_cli/cleanup_rules.py `_SAFE_TEMP_ROOTS`: /tmp, /private/tmp, /var/folders,
+    # /private/var/folders). An entry here is matched against that fixed list, not expanded
+    # as an env var — a raw ${TMPDIR} entry was removed after review flagged that the calling
+    # process controls its own TMPDIR, so an env-derived root is not actually a boundary (an
+    # empty TMPDIR resolves to the cwd; TMPDIR=/ resolves to the filesystem root).
+    # /var/folders is included because it's macOS's REAL per-user $TMPDIR (what Python's
+    # tempfile module and most TMPDIR-aware tools actually write under) — /tmp alone would
+    # make `dev clean-logs "$TMPDIR/x.log"` fail on a stock macOS session, which is not a
+    # theoretical gap, it's the common case.
+    allowed_roots: ["/tmp", "/var/folders"]
+    allowed_suffixes: [".log"]

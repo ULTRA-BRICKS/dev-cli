@@ -16,6 +16,11 @@ Assumptions:
       ``lib/agenttools_dev``). The ``--agenttools-dev-probe`` flag and the ``.agenttools-dev``
       state-dir name are preserved as external wire contracts (agent-tools ship.sh + the
       portable git-hooks probe them); do NOT rename them.
+    * ``dev kill-orphan`` / ``dev clean-logs`` never accept a free-text pattern. Both are
+      validated against ``rules.yaml`` via ``dev_cli.cleanup_rules`` (structured
+      ``--harness``/``--worker``/``--instance`` fields, or an explicit path checked against an
+      allowed root+suffix) — see that module's docstring. This is a separate validation path
+      from ``dev stop``'s ``_validate_stop_target``; never fold the two together.
 """
 
 from __future__ import annotations
@@ -30,8 +35,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence, Tuple
+
+from . import cleanup_rules
 
 EXIT_USAGE = 2
 EXIT_MISSING_DEP = 127
@@ -68,12 +76,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="start a configured dev server or e2e job in the background",
         epilog=(
             "Targets come from rig.yaml dev.server or dev.e2e jobs. Commands must look like "
-            "development/e2e tools; obvious destructive heads are refused.\n\n"
-            + common_epilog
+            "development/e2e tools; obvious destructive heads are refused.\n\n" + common_epilog
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    start.add_argument("target", help="configured target name: server, e2e, or a dev.e2e.jobs entry")
+    start.add_argument(
+        "target", help="configured target name: server, e2e, or a dev.e2e.jobs entry"
+    )
     start.add_argument("target_args", nargs=argparse.REMAINDER, metavar="args")
 
     list_cmd = sub.add_parser(
@@ -89,8 +98,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="show status/progress for configured dev/e2e targets",
         epilog=(
             "Status reads configured target metadata and local state files. E2e artifacts "
-            "can declare artifacts_root and logs_root.\n\n"
-            + common_epilog
+            "can declare artifacts_root and logs_root.\n\n" + common_epilog
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -103,7 +111,9 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     logs.add_argument("target", help="configured target name")
-    logs.add_argument("--tail", type=_positive_int, default=200, help="number of log lines to print")
+    logs.add_argument(
+        "--tail", type=_positive_int, default=200, help="number of log lines to print"
+    )
 
     run = sub.add_parser(
         "run",
@@ -132,8 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Used by portable shell hooks before they choose `dev run --repo-only test`; prints nothing. "
             "Exit 0 means the script exists, 1 means absent, 2/127 means config/dependency error. "
             "--repo-only ignores the machine-wide rig config so hooks only react to committed "
-            "repo scripts.\n\n"
-            + common_epilog
+            "repo scripts.\n\n" + common_epilog
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -150,12 +159,13 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             f"Before SIGTERM, the target must be a known dev/e2e runner and scoped to the "
             f"current repo or {DEV_PROJECT_PATHS_ENV}; --pgid validates every visible "
-            "process group member first.\n\n"
-            + common_epilog
+            "process group member first.\n\n" + common_epilog
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    stop.add_argument("target", nargs="?", help="configured target name: server, e2e, or a dev.e2e.jobs entry")
+    stop.add_argument(
+        "target", nargs="?", help="configured target name: server, e2e, or a dev.e2e.jobs entry"
+    )
     target = stop.add_mutually_exclusive_group()
     target.add_argument("--pid", type=_positive_int, help="process id to validate and stop")
     target.add_argument("--port", type=_port_int, help="listening TCP port to resolve and stop")
@@ -184,12 +194,46 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"print shell exports for {DEV_PROJECT_PATHS_ENV}",
         epilog=(
             "This prints an export line only; it cannot mutate the parent shell. "
-            "Use it for explicit multi-project sessions.\n\n"
-            + common_epilog
+            "Use it for explicit multi-project sessions.\n\n" + common_epilog
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    env.add_argument("--add-project", required=True, help="project root to append to the session env")
+    env.add_argument(
+        "--add-project", required=True, help="project root to append to the session env"
+    )
+
+    kill_orphan = sub.add_parser(
+        "kill-orphan",
+        help="kill orphaned harness processes matched against a named family in rules.yaml",
+        epilog=(
+            "Targets are structured (--harness/--worker/--instance), never a free-text "
+            "pattern: the family in rules.yaml supplies the argv anchor, id shape, and signal "
+            "method, so an unscoped kill cannot be expressed through this command. Editing "
+            "rules.yaml requires a passed review-cli quorum (see "
+            "scripts/git-hooks/check_rules_quorum.py).\n\n" + common_epilog
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    kill_orphan.add_argument(
+        "--harness", required=True, help="kill family name from rules.yaml, e.g. vscode-e2e-harness"
+    )
+    kill_orphan.add_argument("--worker", help="worker/slot identifier required by most families")
+    kill_orphan.add_argument(
+        "--instance", help="optional unique instance id; omit to target the whole worker slot"
+    )
+
+    clean_logs = sub.add_parser(
+        "clean-logs",
+        help="delete explicit debug/run log files after validating them against rules.yaml",
+        epilog=(
+            "Each path must resolve (after following symlinks) under an allowed root with an "
+            "allowed suffix in rules.yaml clean_log_rules; globs are refused, only explicit "
+            "file paths. Every path in one call is validated before any file is "
+            "deleted.\n\n" + common_epilog
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    clean_logs.add_argument("paths", nargs="+", help="explicit log file path(s) to delete")
 
     return parser
 
@@ -226,7 +270,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if raw_args and raw_args[0] == "install-skill":
         if len(raw_args) > 1 and raw_args[1] in ("-h", "--help"):
-            print("Usage: dev install-skill\n\nRegister the dev agent skill with detected harnesses (idempotent).")
+            print(
+                "Usage: dev install-skill\n\nRegister the dev agent skill with detected harnesses (idempotent)."
+            )
             return 0
         from .install import install_skill
 
@@ -252,6 +298,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return _cmd_e2e(args)
         if args.command == "env":
             return _cmd_env(args)
+        if args.command == "kill-orphan":
+            return _cmd_kill_orphan(args)
+        if args.command == "clean-logs":
+            return _cmd_clean_logs(args)
     except DevError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
@@ -321,7 +371,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
         seen.add(key)
         pid = int(record.get("pid", 0) or 0)
         status = "running" if pid > 0 and _pid_alive(pid) else "stale"
-        ports = _ports_text(record.get("ports") or ([record["port"]] if record.get("port") is not None else []))
+        ports = _ports_text(
+            record.get("ports") or ([record["port"]] if record.get("port") is not None else [])
+        )
         command = f" cmd={record.get('command', '')}" if record.get("command") else ""
         print(f"{key[0]} {key[1]} {status} pid={pid}{ports}{command}")
     for key, target in sorted(configured.items()):
@@ -449,16 +501,23 @@ def _script_command(config: dict, script: str, extra_args: Sequence[str]) -> str
             _command_from_entry(scripts[script], f"scripts.{script}"),
             extra_args,
         )
-    e2e_targets = {target["name"]: target for target in _configured_targets(config) if target["kind"] == "e2e"}
+    e2e_targets = {
+        target["name"]: target for target in _configured_targets(config) if target["kind"] == "e2e"
+    }
     if script in e2e_targets:
         command = _target_command(e2e_targets[script])
         return _with_extra_args(command, extra_args)
     known_scripts = sorted(str(name) for name in scripts) if isinstance(scripts, dict) else []
     known_e2e = sorted(str(name) for name in e2e_targets)
-    known = ", ".join([
-        *known_scripts,
-        *[("dev.e2e" if name == "e2e" else f"dev.e2e.jobs.{name}") for name in known_e2e],
-    ]) or "(none)"
+    known = (
+        ", ".join(
+            [
+                *known_scripts,
+                *[("dev.e2e" if name == "e2e" else f"dev.e2e.jobs.{name}") for name in known_e2e],
+            ]
+        )
+        or "(none)"
+    )
     if scripts is None and not known_e2e:
         raise DevError(
             "rig.yaml does not define top-level scripts: or dev.e2e jobs. Add, for example:\n"
@@ -516,7 +575,9 @@ def _configured_targets(config: dict) -> List[dict]:
         for name, entry in jobs.items():
             if not isinstance(entry, dict):
                 raise DevError(f"dev.e2e.jobs.{name} must be a mapping")
-            targets.append(_e2e_target_from_entry(config, str(name), entry, f"dev.e2e.jobs.{name}", parent=e2e))
+            targets.append(
+                _e2e_target_from_entry(config, str(name), entry, f"dev.e2e.jobs.{name}", parent=e2e)
+            )
     return targets
 
 
@@ -526,22 +587,30 @@ def _server_target(config: dict, entry: dict) -> dict:
     target = {
         "kind": "server",
         "name": "server",
-        "command": _command_from_script_ref(config, entry.get("script"), "dev.server.script", required=False),
+        "command": _command_from_script_ref(
+            config, entry.get("script"), "dev.server.script", required=False
+        ),
         "ports": _entry_ports(entry, "dev.server"),
     }
     for key in ("url", "ready_url", "logs_root"):
         if isinstance(entry.get(key), str) and entry[key].strip():
             target[key] = entry[key].strip()
     if isinstance(entry.get("process_matchers"), list):
-        target["process_matchers"] = [item for item in entry["process_matchers"] if isinstance(item, str)]
+        target["process_matchers"] = [
+            item for item in entry["process_matchers"] if isinstance(item, str)
+        ]
     return target
 
 
-def _e2e_target_from_entry(config: dict, name: str, entry: dict, label: str, *, parent: dict) -> dict:
+def _e2e_target_from_entry(
+    config: dict, name: str, entry: dict, label: str, *, parent: dict
+) -> dict:
     target = {
         "kind": "e2e",
         "name": name,
-        "command": _command_from_script_ref(config, entry.get("script"), f"{label}.script", required=False),
+        "command": _command_from_script_ref(
+            config, entry.get("script"), f"{label}.script", required=False
+        ),
     }
     for key in ("requires_server", "artifacts_root", "logs_root"):
         value = entry.get(key, parent.get(key))
@@ -559,7 +628,11 @@ def _command_from_script_ref(config: dict, script: object, label: str, *, requir
         raise DevError(f"{label} must be a non-empty script name")
     scripts = config.get("scripts")
     if not isinstance(scripts, dict) or script not in scripts:
-        known = ", ".join(sorted(str(name) for name in scripts)) if isinstance(scripts, dict) else "(none)"
+        known = (
+            ", ".join(sorted(str(name) for name in scripts))
+            if isinstance(scripts, dict)
+            else "(none)"
+        )
         raise DevError(f"{label} references missing scripts.{script}; known scripts: {known}")
     return _command_from_entry(scripts[script], f"scripts.{script}")
 
@@ -587,9 +660,14 @@ def _configured_e2e_target(config: dict, name: str) -> dict:
     for target in _configured_targets(config):
         if target["kind"] == "e2e" and target["name"] == name:
             return target
-    known = ", ".join(
-        sorted(target["name"] for target in _configured_targets(config) if target["kind"] == "e2e")
-    ) or "(none)"
+    known = (
+        ", ".join(
+            sorted(
+                target["name"] for target in _configured_targets(config) if target["kind"] == "e2e"
+            )
+        )
+        or "(none)"
+    )
     raise DevError(f"dev.e2e target {name!r} is not defined. Known e2e targets: {known}.")
 
 
@@ -907,7 +985,9 @@ def _read_states(repo_root: Path) -> List[tuple[dict, Path]]:
     return records
 
 
-def _state_for_target(repo_root: Path, kind: str, name: str) -> tuple[Optional[dict], Optional[Path]]:
+def _state_for_target(
+    repo_root: Path, kind: str, name: str
+) -> tuple[Optional[dict], Optional[Path]]:
     path = _state_path(repo_root, kind, name)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -934,7 +1014,9 @@ def _cmd_env(args: argparse.Namespace) -> int:
     except DevError:
         base = Path.cwd()
     project = _normalize_project_path(args.add_project, base)
-    existing = [item for item in os.environ.get(DEV_PROJECT_PATHS_ENV, "").split(os.pathsep) if item]
+    existing = [
+        item for item in os.environ.get(DEV_PROJECT_PATHS_ENV, "").split(os.pathsep) if item
+    ]
     project_text = str(project)
     if project_text not in existing:
         existing.append(project_text)
@@ -942,10 +1024,228 @@ def _cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_cleanup_rules_or_raise() -> dict:
+    try:
+        return cleanup_rules.load_rules()
+    except cleanup_rules.RuleError as exc:
+        raise DevError(str(exc)) from exc
+
+
+def _cmd_kill_orphan(args: argparse.Namespace) -> int:
+    rules = _load_cleanup_rules_or_raise()
+    try:
+        target = cleanup_rules.resolve_kill_target(rules, args.harness, args.worker, args.instance)
+        # Selection (which processes match, and the max_matches refusal) lives in
+        # cleanup_rules.KillTarget.select_matches — NOT reimplemented here — so that decision
+        # is covered by the same review-quorum gate as the rest of the matching logic.
+        matches = target.select_matches(_list_all_processes())
+    except cleanup_rules.RuleError as exc:
+        raise DevError(str(exc)) from exc
+    if not matches:
+        print(f"dev kill-orphan: no processes matched {target.describe()}")
+        return 0
+    # Audit intent BEFORE acting: if termination is interrupted partway (a pid vanishes, a
+    # permission error), the record of what we were about to do still exists.
+    _audit_cleanup_or_raise(
+        "kill-orphan",
+        {
+            "family": target.family,
+            "worker": target.worker,
+            "instance": target.instance,
+            "method": target.method,
+            "intended": [{"pid": pid, "command": command} for pid, command in matches],
+        },
+    )
+    killed, already_gone, failed = _terminate_kill_target_matches(matches, target)
+    print(
+        f"dev kill-orphan: {target.describe()} method={target.method} -> "
+        f"killed {len(killed)}/{len(matches)} process(es): {', '.join(str(pid) for pid in killed)}"
+    )
+    if already_gone:
+        print(
+            f"dev kill-orphan: already gone by signal time (target already achieved): "
+            f"{', '.join(str(pid) for pid in already_gone)}"
+        )
+    if failed:
+        print(
+            f"dev kill-orphan: FAILED to signal {len(failed)} process(es): "
+            f"{', '.join(str(pid) for pid in failed)}"
+        )
+    _audit_cleanup_or_raise(
+        "kill-orphan-result",
+        {
+            "family": target.family,
+            "worker": target.worker,
+            "instance": target.instance,
+            "killed_pids": killed,
+            "already_gone_pids": already_gone,
+            "failed_pids": failed,
+        },
+    )
+    if failed:
+        raise DevError(
+            f"{len(failed)} process(es) could not be signaled; see the FAILED line above"
+        )
+    return 0
+
+
+def _terminate_kill_target_matches(
+    matches: List[Tuple[int, str]], target: "cleanup_rules.KillTarget"
+) -> Tuple[List[int], List[int], List[int]]:
+    """Send the configured signal(s) to every matched pid.
+
+    Returns (killed_pids, already_gone_pids, failed_pids) — mirroring _delete_log_files'
+    removed/already_absent/failed triad, so both cleanup commands report partial outcomes with
+    the same shape. Re-validates each pid's command line immediately before signaling (both
+    the initial signal and any SIGKILL escalation) rather than trusting the snapshot taken at
+    match time — a pid can be reused by an unrelated process in the window between enumeration
+    and signaling, or during the sigterm_then_sigkill grace period. A pid that no longer
+    matches (already dead, or reused by something else) is BENIGN — the goal (that target
+    gone) is already achieved — and goes in already_gone_pids, not failed_pids. A real signal
+    failure (permission denied) goes in failed_pids. Neither aborts signaling the rest of the
+    batch.
+    """
+    initial_sig = signal.SIGKILL if target.method == "sigkill" else signal.SIGTERM
+    killed: List[int] = []
+    already_gone: List[int] = []
+    failed: List[int] = []
+    for pid, _snapshot_command in matches:
+        if not _revalidate_kill_match(pid, target):
+            already_gone.append(pid)
+            continue
+        if _try_send_signal(pid, initial_sig):
+            killed.append(pid)
+        else:
+            failed.append(pid)
+    if target.method == "sigterm_then_sigkill" and target.grace_seconds > 0 and killed:
+        time.sleep(target.grace_seconds)
+        for pid in killed:
+            if not _pid_alive(pid):
+                continue
+            if not _revalidate_kill_match(pid, target):
+                continue
+            _try_send_signal(pid, signal.SIGKILL)
+    return killed, already_gone, failed
+
+
+def _try_send_signal(pid: int, sig: signal.Signals) -> bool:
+    try:
+        _send_signal(pid, sig)
+        return True
+    except DevError:
+        return False
+
+
+def _revalidate_kill_match(pid: int, target: "cleanup_rules.KillTarget") -> bool:
+    """Re-fetch and re-match the pid's CURRENT command line against target's own pattern.
+
+    Deliberately does not compare against the enumeration-time snapshot (no "expected_command"
+    parameter): BSD `ps` truncates the command column unless invoked with a wide-output flag,
+    so two separately-invoked `ps` calls for the same still-matching process are not
+    guaranteed byte-identical — a string-equality check would false-negative on a perfectly
+    legitimate, still-live target. Re-matching against the pattern is also correct if the pid
+    was reused by a DIFFERENT process that still matches the family (still a legitimate kill
+    target).
+    """
+    try:
+        current_command = _process_command(pid)
+    except DevError:
+        return False
+    return target.matches(current_command)
+
+
+def _cmd_clean_logs(args: argparse.Namespace) -> int:
+    rules = _load_cleanup_rules_or_raise()
+    try:
+        targets = cleanup_rules.resolve_clean_log_paths(rules, args.paths)
+    except cleanup_rules.RuleError as exc:
+        raise DevError(str(exc)) from exc
+    _audit_cleanup_or_raise("clean-logs", {"intended_paths": [str(p) for p in targets]})
+    removed, already_absent, failed = _delete_log_files(targets)
+    # Print the summary BEFORE the result-audit write: if the audit write itself fails, the
+    # user still learns what was actually deleted rather than seeing only a raw DevError.
+    _print_clean_logs_summary(removed, already_absent, failed)
+    _audit_cleanup_or_raise(
+        "clean-logs-result",
+        {"removed": removed, "already_absent": already_absent, "failed": failed},
+    )
+    if failed:
+        # Detail already printed by _print_clean_logs_summary above — keep this message short
+        # so the failure isn't reported twice.
+        raise DevError(f"{len(failed)} file(s) could not be deleted; see the FAILED line above")
+    return 0
+
+
+def _delete_log_files(targets: List[Path]) -> Tuple[List[str], List[str], List[str]]:
+    removed: List[str] = []
+    already_absent: List[str] = []
+    failed: List[str] = []
+    for path in targets:
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except FileNotFoundError:
+            already_absent.append(str(path))
+        except OSError as exc:
+            failed.append(f"{path}: {exc}")
+    return removed, already_absent, failed
+
+
+def _print_clean_logs_summary(
+    removed: List[str], already_absent: List[str], failed: List[str]
+) -> None:
+    if removed:
+        print(f"dev clean-logs: removed {len(removed)} file(s): {', '.join(removed)}")
+    if already_absent:
+        print(
+            f"dev clean-logs: already absent {len(already_absent)} file(s): "
+            f"{', '.join(already_absent)}"
+        )
+    if failed:
+        print(f"dev clean-logs: FAILED to remove {len(failed)} file(s): {', '.join(failed)}")
+    if not removed and not already_absent and not failed:
+        print("dev clean-logs: nothing to do")
+
+
+def _audit_cleanup_or_raise(action: str, detail: dict) -> None:
+    """Append one JSON line to the machine-wide cleanup audit log.
+
+    Deliberately NOT scoped to a repo (unlike _state_dir, which is per-repo/worktree state):
+    a kill-orphan/clean-logs call can target a process or file with no relationship to the
+    caller's cwd, so tying the audit trail to `_find_repo_root(Path.cwd())` would make it
+    fail (or write to the wrong place) for the exact cases these commands exist to handle
+    (e.g. `cd /tmp && dev clean-logs /tmp/x.log`).
+
+    Raises DevError (not a raw OSError) on failure, so main()'s single except DevError clause
+    still produces the CLI's normal error contract instead of a traceback — this call happens
+    BEFORE any kill/delete, so an unwritable state dir fails the whole command closed rather
+    than acting with no audit trail.
+    """
+    directory = _global_state_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        record = {"ts": time.time(), "action": action, **detail}
+        with (directory / "cleanup-audit.log").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError as exc:
+        raise DevError(f"could not write cleanup audit log to {directory}: {exc}") from exc
+
+
+def _global_state_dir() -> Path:
+    base = os.environ.get("XDG_STATE_HOME")
+    if not base or not os.path.isabs(base):
+        # XDG requires an absolute path; a relative/unset value falls back to the spec default
+        # rather than silently resolving against whatever the current cwd happens to be.
+        base = str(Path.home() / ".local" / "state")
+    return Path(base) / "dev-cli"
+
+
 def _cmd_stop(args: argparse.Namespace) -> int:
     repo_root = _find_repo_root(Path.cwd())
     if args.target and (args.pid is not None or args.port is not None or args.pgid is not None):
-        raise DevError("pass either a dev target name, --pid, --port, or --pgid; not multiple targets")
+        raise DevError(
+            "pass either a dev target name, --pid, --port, or --pgid; not multiple targets"
+        )
     if args.pgid is not None:
         return _stop_process_group(repo_root, args.pgid)
     if args.target:
@@ -996,7 +1296,9 @@ def _stop_target(repo_root: Path, config: dict, target: dict) -> int:
         except FileNotFoundError:
             pass
     if pgid <= 0:
-        print(f"sent SIGTERM to pid{'s' if len(pids) != 1 else ''} {', '.join(str(pid) for pid in pids)}")
+        print(
+            f"sent SIGTERM to pid{'s' if len(pids) != 1 else ''} {', '.join(str(pid) for pid in pids)}"
+        )
     return 0
 
 
@@ -1150,26 +1452,28 @@ _WRAPPER_OPT_ARGS = {
     "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
     "gtimeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
 }
-_DESTRUCTIVE_HEADS = frozenset({
-    "chmod",
-    "chown",
-    "cp",
-    "dd",
-    "fdisk",
-    "format",
-    "kill",
-    "killall",
-    "mkfs",
-    "mount",
-    "mv",
-    "pkill",
-    "rm",
-    "rmdir",
-    "shred",
-    "sudo",
-    "umount",
-    "wipefs",
-})
+_DESTRUCTIVE_HEADS = frozenset(
+    {
+        "chmod",
+        "chown",
+        "cp",
+        "dd",
+        "fdisk",
+        "format",
+        "kill",
+        "killall",
+        "mkfs",
+        "mount",
+        "mv",
+        "pkill",
+        "rm",
+        "rmdir",
+        "shred",
+        "sudo",
+        "umount",
+        "wipefs",
+    }
+)
 _PYTHON_RE = re.compile(r"python(?:\d+(?:\.\d+)?)?$")
 _SHELL_HEADS = frozenset({"sh", "bash", "zsh"})
 
@@ -1181,8 +1485,7 @@ def _ensure_lifecycle_command(command: str, repo_root: Optional[Path] = None) ->
         or _has_shell_substitution(command)
         or _has_shell_redirection(command)
         or any(
-            _has_destructive_head(segment, repo_root)
-            or not _is_dev_tool(segment, repo_root)
+            _has_destructive_head(segment, repo_root) or not _is_dev_tool(segment, repo_root)
             for segment in segments
         )
     ):
@@ -1225,95 +1528,99 @@ _UV_RUN_SHORT_FLAGS_WITH_VALUE = frozenset({"C", "P", "b", "c", "f", "i", "p", "
 # Derived from `uv help run` on 2026-07-09. Unknown flags also emit speculative
 # value-skip payload starts, so future value-taking uv flags cannot hide inline or
 # destructive payloads behind an unrecognized option operand.
-_UV_RUN_BOOLEAN_FLAGS = frozenset({
-    "--active",
-    "--all-extras",
-    "--all-groups",
-    "--all-packages",
-    "--compile-bytecode",
-    "--exact",
-    "--frozen",
-    "--gui-script",
-    "--help",
-    "--isolated",
-    "--locked",
-    "--managed-python",
-    "--module",
-    "--native-tls",
-    "--no-build",
-    "--no-build-isolation",
-    "--no-binary",
-    "--no-cache",
-    "--no-config",
-    "--no-default-groups",
-    "--no-dev",
-    "--no-editable",
-    "--no-env-file",
-    "--no-index",
-    "--no-managed-python",
-    "--no-progress",
-    "--no-project",
-    "--no-python-downloads",
-    "--no-sources",
-    "--no-sync",
-    "--offline",
-    "--only-dev",
-    "--refresh",
-    "--reinstall",
-    "--script",
-    "--upgrade",
-    "-U",
-    "-h",
-    "-m",
-    "-n",
-    "-q",
-    "-s",
-    "-v",
-})
-_UV_RUN_FLAGS_WITH_VALUE = frozenset({
-    "--allow-insecure-host",
-    "--build-constraint",
-    "--cache-dir",
-    "--color",
-    "--config-file",
-    "--config-setting",
-    "--config-settings-package",
-    "--constraint",
-    "--default-index",
-    "--directory",
-    "--env-file",
-    "--exclude-newer",
-    "--exclude-newer-package",
-    "--extra",
-    "--extra-index-url",
-    "--find-links",
-    "--fork-strategy",
-    "--group",
-    "--index",
-    "--index-strategy",
-    "--index-url",
-    "--keyring-provider",
-    "--link-mode",
-    "--no-binary-package",
-    "--no-build-isolation-package",
-    "--no-build-package",
-    "--no-extra",
-    "--no-group",
-    "--only-group",
-    "--package",
-    "--prerelease",
-    "--project",
-    "--python",
-    "--python-preference",
-    "--python-platform",
-    "--refresh-package",
-    "--reinstall-package",
-    "--resolution",
-    "--upgrade-package",
-    "--with",
-    "--with-editable",
-    "--with-requirements",
-})
+_UV_RUN_BOOLEAN_FLAGS = frozenset(
+    {
+        "--active",
+        "--all-extras",
+        "--all-groups",
+        "--all-packages",
+        "--compile-bytecode",
+        "--exact",
+        "--frozen",
+        "--gui-script",
+        "--help",
+        "--isolated",
+        "--locked",
+        "--managed-python",
+        "--module",
+        "--native-tls",
+        "--no-build",
+        "--no-build-isolation",
+        "--no-binary",
+        "--no-cache",
+        "--no-config",
+        "--no-default-groups",
+        "--no-dev",
+        "--no-editable",
+        "--no-env-file",
+        "--no-index",
+        "--no-managed-python",
+        "--no-progress",
+        "--no-project",
+        "--no-python-downloads",
+        "--no-sources",
+        "--no-sync",
+        "--offline",
+        "--only-dev",
+        "--refresh",
+        "--reinstall",
+        "--script",
+        "--upgrade",
+        "-U",
+        "-h",
+        "-m",
+        "-n",
+        "-q",
+        "-s",
+        "-v",
+    }
+)
+_UV_RUN_FLAGS_WITH_VALUE = frozenset(
+    {
+        "--allow-insecure-host",
+        "--build-constraint",
+        "--cache-dir",
+        "--color",
+        "--config-file",
+        "--config-setting",
+        "--config-settings-package",
+        "--constraint",
+        "--default-index",
+        "--directory",
+        "--env-file",
+        "--exclude-newer",
+        "--exclude-newer-package",
+        "--extra",
+        "--extra-index-url",
+        "--find-links",
+        "--fork-strategy",
+        "--group",
+        "--index",
+        "--index-strategy",
+        "--index-url",
+        "--keyring-provider",
+        "--link-mode",
+        "--no-binary-package",
+        "--no-build-isolation-package",
+        "--no-build-package",
+        "--no-extra",
+        "--no-group",
+        "--only-group",
+        "--package",
+        "--prerelease",
+        "--project",
+        "--python",
+        "--python-preference",
+        "--python-platform",
+        "--refresh-package",
+        "--reinstall-package",
+        "--resolution",
+        "--upgrade-package",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+    }
+)
 
 
 def _runner_payload_is_destructive(segment: str, repo_root: Optional[Path] = None) -> bool:
@@ -1324,19 +1631,22 @@ def _runner_payload_is_destructive(segment: str, repo_root: Optional[Path] = Non
         payload = tokens[start:]
         shell_payload = _shell_command_payload(payload)
         if shell_payload is not None:
-            return _has_destructive_head(shell_payload, repo_root) or not _segments_are_lifecycle_safe(
+            return _has_destructive_head(
                 shell_payload, repo_root
-            )
+            ) or not _segments_are_lifecycle_safe(shell_payload, repo_root)
         for index, token in enumerate(payload):
             head = Path(token).name
             if head in _DESTRUCTIVE_HEADS:
                 return True
             if head == "git" and any(
                 item in ("reset", "clean", "checkout", "commit", "push")
-                for item in payload[index + 1:]
+                for item in payload[index + 1 :]
             ):
                 return True
-            if head in ("sh", "bash", "zsh") and _shell_command_payload(payload[index:]) is not None:
+            if (
+                head in ("sh", "bash", "zsh")
+                and _shell_command_payload(payload[index:]) is not None
+            ):
                 return True
     return False
 
@@ -1348,8 +1658,7 @@ def _segments_are_lifecycle_safe(command: str, repo_root: Optional[Path]) -> boo
         and not _has_shell_substitution(command)
         and not _has_shell_redirection(command)
     ) and all(
-        not _segment_has_destructive_head(segment, repo_root)
-        and _is_dev_tool(segment, repo_root)
+        not _segment_has_destructive_head(segment, repo_root) and _is_dev_tool(segment, repo_root)
         for segment in segments
     )
 
@@ -1484,7 +1793,7 @@ def _command_segments(command: str) -> List[str]:
             quote = char
             buf.append(char)
             i += 1
-        elif command[i:i + 2] in ("&&", "||"):
+        elif command[i : i + 2] in ("&&", "||"):
             segments.append("".join(buf).strip())
             buf = []
             i += 2
@@ -1565,12 +1874,17 @@ def _docker_destructive(segment: str) -> bool:
     toks = _split_command(segment)
     for index, token in enumerate(toks[:-1]):
         head = Path(token).name
-        rest = toks[index + 1:]
+        rest = toks[index + 1 :]
         if head == "docker-compose":
             return bool(rest) and rest[0] in {"down", "rm", "kill", "stop"}
         if head != "docker":
             continue
-        if rest[:2] in (["system", "prune"], ["compose", "down"], ["compose", "rm"], ["compose", "stop"]):
+        if rest[:2] in (
+            ["system", "prune"],
+            ["compose", "down"],
+            ["compose", "rm"],
+            ["compose", "stop"],
+        ):
             return True
         if len(rest) >= 2 and rest[0] in {"volume", "image", "container", "network"}:
             return rest[1] in {"rm", "prune"}
@@ -1720,9 +2034,7 @@ def _project_scoped_path(repo_root: Path, path: Path, label: str) -> Path:
     resolved = path.resolve(strict=False)
     if any(_path_inside(resolved, root) for root in _allowed_project_roots(repo_root)):
         return resolved
-    raise DevError(
-        f"{label} points outside the current project or DEV_PROJECT_PATHS: {path}"
-    )
+    raise DevError(f"{label} points outside the current project or DEV_PROJECT_PATHS: {path}")
 
 
 def _pid_for_port(
@@ -1784,18 +2096,57 @@ def _process_cwd(pid: int) -> Optional[Path]:
 
 
 def _process_command(pid: int) -> str:
+    # -ww = unlimited output width. Without it BSD ps truncates the command column to
+    # terminal width, and a long argv (VS Code/Electron launch flags routinely exceed 200
+    # chars) would compare unequal to a `ps -axww` snapshot taken elsewhere (e.g.
+    # _list_all_processes) even for the exact same still-running process.
     try:
         result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
             capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError as exc:
-        raise DevError("cannot inspect process command because ps is not installed", EXIT_MISSING_DEP) from exc
+        raise DevError(
+            "cannot inspect process command because ps is not installed", EXIT_MISSING_DEP
+        ) from exc
     if result.returncode != 0:
         raise DevError(f"cannot inspect process command for pid {pid}")
     return result.stdout.strip()
+
+
+def _list_all_processes() -> List[Tuple[int, str]]:
+    """Enumerate (pid, full command line) for every visible process.
+
+    Used only by ``dev kill-orphan``. Takes no caller-controlled argument (unlike ``pgrep -f``,
+    which interprets the pattern itself and matches an unanchored substring) — matching against
+    the ``rules.yaml`` family's anchor regex happens entirely in Python afterward.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise DevError(
+            "cannot enumerate processes because ps is not installed", EXIT_MISSING_DEP
+        ) from exc
+    if result.returncode != 0:
+        raise DevError("cannot enumerate processes")
+    processes: List[Tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0], 10)
+        except ValueError:
+            continue
+        processes.append((pid, parts[1]))
+    return processes
 
 
 def _process_group_members(pgid: int) -> List[int]:
@@ -1807,7 +2158,9 @@ def _process_group_members(pgid: int) -> List[int]:
             check=False,
         )
     except FileNotFoundError as exc:
-        raise DevError("cannot inspect process groups because ps is not installed", EXIT_MISSING_DEP) from exc
+        raise DevError(
+            "cannot inspect process groups because ps is not installed", EXIT_MISSING_DEP
+        ) from exc
     if result.returncode != 0:
         raise DevError(f"cannot inspect process group {pgid}")
     members: List[int] = []

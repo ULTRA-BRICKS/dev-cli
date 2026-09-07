@@ -44,6 +44,12 @@ line-length = 100
 # The vendored tree is a byte-identical mirror of the agent-tools canonical — never lint or
 # reformat it here (the drift guard requires it stay identical; fixes land upstream).
 extend-exclude = ["vendor"]
+# The ENFORCED source of truth for the pinned lint version: a ruff binary that doesn't match
+# exits with a clear "version mismatch" error instead of silently reporting different findings
+# than CI. .github/workflows/tests.yml's `pip install`, README.md "Tests", and AGENTS.md
+# "Tests" each repeat the literal for a human reading CI/docs without this file open —
+# tests/test_ruff_pin_sync.py asserts all four stay equal on every test run (2026-08-28).
+required-version = "==0.15.18"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

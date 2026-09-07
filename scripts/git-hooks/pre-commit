@@ -1,0 +1,29 @@
+#!/bin/sh
+# dev-cli's own repo-local pre-commit hook, wired via a WORKTREE-SCOPED `core.hooksPath`
+# (`git config --worktree core.hooksPath scripts/git-hooks`, set by install.sh — see that
+# file's comment for why plain core.hooksPath and a worktree-specific hooks/ slot were both
+# tried and rejected first). This is checking OUT dev-cli's own source at commit time — a
+# separate concern from what the `dev` CLI does at RUNTIME for a project that merely
+# consumes it.
+#
+# A repo-local core.hooksPath SHADOWS ~/.config/git/hooks entirely (even worktree-scoped), so
+# this hook chains to the global dispatcher + review-before-commit gate itself (same pattern
+# agent-tools/git-hooks/global-dispatcher/install-local-hooks.sh's `inject_raw` uses for any
+# other repo with a custom hooksPath) — otherwise wiring this hooksPath would silently turn
+# off the global secret-scan and review-gate for this repo.
+set -eu
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+DISPATCHER="${XDG_CONFIG_HOME:-$HOME/.config}/git/run-global-hooks"
+REVIEW_GATE="${XDG_CONFIG_HOME:-$HOME/.config}/git/hooks/review-gate"
+
+# 1. This repo's own rules.yaml-quorum gate.
+python3 "$HOOK_DIR/check_rules_quorum.py"
+
+# 2. Global hooks (secret-scan, etc.) — every fragment in global-hooks.d/pre-commit/.
+# Best-effort: a machine without this personal dispatcher installed just skips this stage.
+[ -x "$DISPATCHER" ] && { "$DISPATCHER" pre-commit "$@" || exit $?; }
+
+# 3. review-before-commit gate. Best-effort for the same reason.
+[ -x "$REVIEW_GATE" ] && { "$REVIEW_GATE" "$@" || exit $?; }
+
+exit 0

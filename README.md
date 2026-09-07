@@ -46,6 +46,8 @@ dev stop --pid <pid>
 dev stop --port <port>
 dev stop --pgid <pgid>
 dev env --add-project <path>
+dev kill-orphan --harness <name> --worker <w> [--instance <i>]
+dev clean-logs <path> [<path> ...]
 dev install-skill
 dev --version
 ```
@@ -162,6 +164,33 @@ while raw Docker/Playwright/process probing remains behind the CLI.
 Only after both checks pass does it send `SIGTERM`. `--port` uses `lsof` to map a listening port
 to a pid; `--pgid` validates visible processes in the group before signalling it.
 
+### `dev kill-orphan` and `dev clean-logs`
+
+Both commands exist so agents stop generating ad hoc `pkill -f <pattern>` / `rm -f <path>`
+one-liners for routine harness cleanup — every such shell command needs interactive
+Bash-permission approval, and an inconsistent free-text pattern (e.g. a worker-index-only
+`pkill` with no unique suffix) can accidentally match an unrelated process. Neither command
+accepts a free-text pattern at all: every target is validated against `rules.yaml` (see that
+file's own header comment) before anything is killed or deleted, and an under-specified or
+unscoped target is refused outright, not best-effort-warned.
+
+```bash
+# Kill exactly one E2E harness instance (safest — a specific 8-hex instance id):
+dev kill-orphan --harness vscode-e2e-harness --worker 2 --instance 19fd16aa
+
+# Reap a whole worker slot before relaunch (instance omitted — a crashed prior run's
+# hex suffix is unknown, but the match still requires the exact --user-data-dir= anchor
+# and this one worker index; see rules.yaml for why this is still safe):
+dev kill-orphan --harness vscode-e2e-harness --worker 2
+
+# Delete explicit debug/run logs under an allowed temp root:
+dev clean-logs /tmp/hyp1404-run.log /tmp/hyp-inspector-focus/run-reload.log
+```
+
+`rules.yaml` (and `dev_cli/cleanup_rules.py`'s validation functions, an equal safety boundary)
+cannot be edited without a passed review-cli quorum for the task code — see AGENTS.md
+"`dev kill-orphan` / `dev clean-logs` never accept a free-text pattern" for the full mechanism.
+
 ### Multi-project sessions
 
 `DEV_PROJECT_PATHS` is an `os.pathsep`-separated list of extra project roots allowed for the
@@ -206,7 +235,7 @@ token `agenttools-dev`) and the `.agenttools-dev` per-worktree state-dir name. D
 
 ```bash
 python -m pytest -q      # hermetic; monkeypatches all process/signal helpers, no real processes
-ruff check .
+ruff check .              # match CI's pinned version: pip install ruff==0.15.18 (see .github/workflows/tests.yml)
 ```
 
 <!-- rig:ecosystem-block -->
