@@ -17,3 +17,7 @@ uv.lock
 
 # Per-machine Claude Code harness overrides (a shared settings.json IS committed).
 .claude/settings.local.json
+
+# Backup artifact written by `rig apply` when it overwrites a rig-managed file in place —
+# never meant to be committed.
+*.rig-bak-*
