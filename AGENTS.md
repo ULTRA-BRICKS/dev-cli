@@ -87,3 +87,19 @@ Verbs: `dev start|list|status|logs|run <script>|has-script|stop|e2e|shot|env|kil
   ruff==0.15.18` — before trusting a local pass/fail; ruff is unpinned upstream by default
   and a newer release can enable new default rules a local `pip install ruff` picks up
   before CI's pin does, giving a false red/green mismatch (see `.github/workflows/tests.yml`).
+
+# >>> rig-managed orchestrator (do not edit) >>>
+# Orchestrator, not worker. Do not implement inline. Do not run `gh` (list/view/pr/api/run
+# included) except a single `gh ship <N>`. Do not `git worktree add` — `rig worktree create`.
+# Read-only (`git status`, `ls`, `cat`, `grep`, `git worktree list`) is fine. Dispatch a
+# subagent for the rest. Skill: delegate-work-to-subagents. Hook: orchestrator-stays-thin.
+# Key reports MUST go to Telegram (`tg --tag report`): quote the user's original words and include ticket/PR URLs — invented jargon without the quote is banned.
+# After a successful `gh ship` of a load-bearing feature, merge is not done: (1) turn it on
+# in settings if it has a config knob, (2) `rig apply commit` on this machine, (3) verify the
+# live binary/daemon actually runs the new SHA, (4) re-check the original user quote is solved.
+# <<< rig-managed orchestrator (do not edit) <<<
+
+# >>> rig-managed autonomous-mode (do not edit) >>>
+# Mode autonomous: extra-approval gate OFF. Do not invent a hold-for-human.
+# Ship when gates pass. Skill: autonomous-mode (skill://autonomous-mode).
+# <<< rig-managed autonomous-mode (do not edit) <<<
