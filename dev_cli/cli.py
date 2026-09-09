@@ -33,6 +33,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -413,17 +414,20 @@ def _cmd_list(args: argparse.Namespace) -> int:
         key = (str(record.get("kind", "target")), str(record.get("name", "")))
         seen.add(key)
         pid = int(record.get("pid", 0) or 0)
-        status = "running" if pid > 0 and _pid_alive(pid) else "stale"
-        ports = _ports_text(
-            record.get("ports") or ([record["port"]] if record.get("port") is not None else [])
+        record_ports = record.get("ports") or (
+            [record["port"]] if record.get("port") is not None else []
         )
+        status = _record_state(pid, record_ports)
+        ports = _ports_text(record_ports)
         command = f" cmd={record.get('command', '')}" if record.get("command") else ""
         print(f"{key[0]} {key[1]} {status} pid={pid}{ports}{command}")
     for key, target in sorted(configured.items()):
         if key not in seen:
-            ports = _ports_text(target.get("ports") or [])
+            target_ports = target.get("ports") or []
+            status = _configured_state(target_ports)
+            ports = _ports_text(target_ports)
             command = f" cmd={target['command']}" if target.get("command") else ""
-            print(f"{target['kind']} {target['name']} configured{ports}{command}")
+            print(f"{target['kind']} {target['name']} {status}{ports}{command}")
     return 0
 
 
@@ -743,19 +747,46 @@ def _ports_text(ports: Sequence[object]) -> str:
     return f" ports={','.join(items)}" if items else ""
 
 
+def _record_state(pid: int, ports: Sequence[int]) -> str:
+    """Liveness label for a target that has a state record.
+
+    ``_pid_alive`` is authoritative when it says the tracked pid is alive. When it says the
+    pid is gone, a bare "stale" would be misleading if a forked child inherited the tracked
+    process's listening socket and outlived it - the port probe (see ``_port_occupied``)
+    catches that case (dev-cli#27, mirroring agent-tools#538's ``probe_port``).
+    """
+    if pid > 0 and _pid_alive(pid):
+        return "running"
+    if ports and any(_port_occupied(port) for port in ports):
+        return "stale (port busy)"
+    return "stale"
+
+
+def _configured_state(ports: Sequence[int]) -> str:
+    """Liveness label for a target with no state record at all - never started, or its
+    record was just removed by a confirmed-dead ``dev stop``. A flat "configured" would
+    misreport an unmanaged/foreign process still bound to one of the target's ports as
+    "nothing running"; probe first (dev-cli#27).
+    """
+    if ports and any(_port_occupied(port) for port in ports):
+        return "running (unmanaged)"
+    return "configured"
+
+
 def _status_line(repo_root: Path, target: dict) -> str:
     record, _path = _state_for_target(repo_root, target["kind"], target["name"])
     if record is not None:
         pid = int(record.get("pid", 0) or 0)
-        state = "running" if pid > 0 and _pid_alive(pid) else "stale"
-        parts = [f"{target['kind']} {target['name']} {state} pid={pid}"]
         ports = record.get("ports") or ([record["port"]] if record.get("port") is not None else [])
+        state = _record_state(pid, ports)
+        parts = [f"{target['kind']} {target['name']} {state} pid={pid}"]
         if ports:
             parts.append(f"ports={','.join(str(port) for port in ports)}")
     else:
-        parts = [f"{target['kind']} {target['name']} configured"]
-        if target.get("ports"):
-            parts.append(f"ports={','.join(str(port) for port in target['ports'])}")
+        ports = target.get("ports") or []
+        parts = [f"{target['kind']} {target['name']} {_configured_state(ports)}"]
+        if ports:
+            parts.append(f"ports={','.join(str(port) for port in ports)}")
     artifacts = _target_artifacts(repo_root, target)
     if artifacts.get("latest_run") is not None:
         parts.append(f"latest_run={artifacts['latest_run']}")
@@ -1049,6 +1080,30 @@ def _pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def _port_occupied(port: int) -> bool:
+    """Is something listening on TCP ``port`` right now, independent of any pid or state
+    record?
+
+    Mirrors agenttools_service.core._default_port_prober's role (agent-tools#538):
+    ``_pid_alive``/state-record checks answer "is the process WE tracked still alive", not
+    "is the PORT still held" - a process that inherited the tracked pid's listening socket
+    (or an entirely unmanaged one) can keep a port hot after the tracked pid is confirmed
+    dead and its state record removed. ``dev status``/``dev list`` probe this directly so
+    that case never reads as a flat, unqualified "stopped"/"configured" (dev-cli#27).
+
+    Tries both loopback families since a server may bind either; occupied if either accepts
+    a connection. A short per-attempt timeout keeps ``dev status``/``dev list`` responsive
+    even when a port is firewalled rather than refused.
+    """
+    for addr in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((addr, port), timeout=0.2):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 EXIT_BAD_CAPTURE = 3
@@ -1392,6 +1447,14 @@ def _global_state_dir() -> Path:
     return Path(base) / "dev-cli"
 
 
+_STOP_POLL_INTERVAL = 0.05
+# Grace window `_terminate_pid`/`_stop_process_group` wait for a confirmed death after
+# SIGTERM before escalating to SIGKILL. Mirrors agenttools_daemon.core.Supervisor's
+# `stop_grace` default (dev-cli#27) - long enough for a normal shutdown hook, short enough
+# to keep `dev stop` responsive when a target needs the escalation.
+_STOP_GRACE_SECONDS = 5.0
+
+
 def _cmd_stop(args: argparse.Namespace) -> int:
     repo_root = _find_repo_root(Path.cwd())
     if args.target and (args.pid is not None or args.port is not None or args.pgid is not None):
@@ -1442,6 +1505,9 @@ def _stop_target(repo_root: Path, config: dict, target: dict) -> int:
     else:
         for pid in pids:
             _terminate_pid(pid, allowed_roots)
+    # Reached only once every signalled pid/group is confirmed dead (escalating to SIGKILL
+    # as needed) - a state record is never unlinked, nor success reported, while the OS
+    # process it names could still be alive (dev-cli#27).
     if record_path is not None:
         try:
             record_path.unlink()
@@ -1484,13 +1550,53 @@ def _stop_process_group(repo_root: Path, pgid: int) -> int:
             _inspect_validated_process_if_present(pid, allowed_roots)
     # Best effort: a process can still join the group after this final inspection.
     _send_process_group_signal(pgid, signal.SIGTERM)
+    if not _wait_until_group_dead(pgid, _STOP_GRACE_SECONDS):
+        _send_process_group_signal_best_effort(pgid, signal.SIGKILL)
+        _wait_until_group_dead(pgid, _STOP_GRACE_SECONDS)
     print(f"sent SIGTERM to process group {pgid}")
     return 0
 
 
+def _wait_until_dead(pid: int, grace: float) -> bool:
+    """Poll until ``pid`` is confirmed dead or ``grace`` seconds elapse. ``True`` if it died.
+
+    Mirrors agenttools_daemon.core.Supervisor._wait_until_dead's confirmed-dead contract
+    (dev-cli#27): no caller sees a state record removed or a stop reported successful before
+    the OS has actually reaped the process.
+    """
+    deadline = time.monotonic() + grace
+    while True:
+        if not _pid_alive(pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(_STOP_POLL_INTERVAL, grace) if grace > 0 else 0.0)
+
+
+def _wait_until_group_dead(pgid: int, grace: float) -> bool:
+    """Process-group analog of ``_wait_until_dead``: poll until no member remains in
+    ``pgid``, or ``grace`` seconds elapse."""
+    deadline = time.monotonic() + grace
+    while True:
+        if not _process_group_members(pgid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(_STOP_POLL_INTERVAL, grace) if grace > 0 else 0.0)
+
+
 def _terminate_pid(pid: int, allowed_roots: Sequence[Path]) -> None:
+    """Validate, SIGTERM, then block until ``pid`` is confirmed dead - escalating to SIGKILL
+    once on timeout (mirrors agenttools_daemon.core.Supervisor.stop()'s confirmed-dead
+    contract; dev-cli#27). A caller that unlinks state or reports success right after this
+    returns can trust the OS has actually reaped the process.
+    """
     _inspect_validated_process(pid, allowed_roots)
     _send_signal(pid, signal.SIGTERM)
+    if _wait_until_dead(pid, _STOP_GRACE_SECONDS):
+        return
+    _send_signal_best_effort(pid, signal.SIGKILL)
+    _wait_until_dead(pid, _STOP_GRACE_SECONDS)
 
 
 def _inspect_validated_process(pid: int, allowed_roots: Sequence[Path]) -> None:
@@ -2346,6 +2452,25 @@ def _send_process_group_signal(pgid: int, sig: signal.Signals) -> None:
         raise DevError(f"process group {pgid} no longer exists") from exc
     except PermissionError as exc:
         raise DevError(f"permission denied sending SIGTERM to process group {pgid}") from exc
+
+
+def _send_signal_best_effort(pid: int, sig: signal.Signals) -> None:
+    """Best-effort signal for the confirmed-dead poll loop: a pid that already exited in the
+    race between the last liveness check and this call is not an error (mirrors
+    agenttools_daemon.core.Supervisor._signal).
+    """
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def _send_process_group_signal_best_effort(pgid: int, sig: signal.Signals) -> None:
+    """Process-group analog of ``_send_signal_best_effort``."""
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
 
 
 if __name__ == "__main__":
