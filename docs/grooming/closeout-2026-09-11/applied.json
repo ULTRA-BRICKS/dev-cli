@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "source_version": 4,
+  "context": {
+    "repository": "ultrabricks/dev-cli",
+    "repository_id": 1304027880,
+    "source_ref": "f707ee2b2f643a4621121187df442554aa968244",
+    "snapshot_run": "34541300125",
+    "mutations": "body only",
+    "manual_exclusions": []
+  },
+  "mode": "apply",
+  "started_at": "2026-09-10T23:38:47.918883+00:00",
+  "events": [
+    {
+      "key": "dev-cli#30",
+      "number": 30,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "274269300a1c1c02cb423d9c69ffbbbc001233129db2579ece5341c90006742d"
+    },
+    {
+      "key": "dev-cli#20",
+      "number": 20,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "a69098036d95b9e37922b7d6f8061ce00c7ca8e3408234dc8b626d5028fe4206"
+    },
+    {
+      "key": "dev-cli#9",
+      "number": 9,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "dbeadd7cc5ffa3f794c73f2610f41c691e5a85f218ecb664fad50e27eaf64bb6"
+    },
+    {
+      "key": "dev-cli#6",
+      "number": 6,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "3d969972590e0d6c06da40f50f8c3e153d1e361c1ecb922179d31f82afeb0f72"
+    },
+    {
+      "key": "dev-cli#3",
+      "number": 3,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "5291a85d5bf6bcd17c07a08d776ba0fb9f9e5a318e4318dc27a1be3b1b21bb85"
+    },
+    {
+      "key": "dev-cli#2",
+      "number": 2,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "5eccd8b7b9acd022abc4edff8d991baef74ee3e4e99629947818535a7c4f46d6"
+    },
+    {
+      "key": "dev-cli#10",
+      "number": 10,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "091da6b631539491f63d61b898207acfb98bdc0b30dde9a61e61262219842654"
+    },
+    {
+      "key": "dev-cli#27",
+      "number": 27,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "62c46a9a45bad6d1cf679c96283721a1a4023f16f86e0360703bc06e683e09e6"
+    },
+    {
+      "key": "dev-cli#25",
+      "number": 25,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "e483e29495f0aad1e04bed8cf9a1bc655e459520eb088d254402dc464e6cf018"
+    },
+    {
+      "key": "dev-cli#21",
+      "number": 21,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "32e2cd11525bd680be7eeb5c76f0dd562b9aaef459dfa2d0ee917174f85fbe1b"
+    },
+    {
+      "key": "dev-cli#19",
+      "number": 19,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "d6a5f6f7cef0ff9496c3d208c2dfd7006975a9e605b8a1b1503fefb18abd5553"
+    },
+    {
+      "key": "dev-cli#15",
+      "number": 15,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "534bae21d09fbff8e0adc310d07063efc271e374f54d1083b1adb67cece8fa2d"
+    },
+    {
+      "key": "dev-cli#13",
+      "number": 13,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "8223e66060d1891a73b66797acefa22d6263310c275b13dfd1dfb8eb4a7970c6"
+    },
+    {
+      "key": "dev-cli#4",
+      "number": 4,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "11a600733a8f38de773cfda672ae94a8c514d031efdb1a43dfb95f3d99bf0e55"
+    },
+    {
+      "key": "dev-cli#1",
+      "number": 1,
+      "result": "patch-received-awaiting-readback",
+      "observed_before_sha256": "17f2e1e92761e63b165b7f149baeedd4f17340ca61af1c73c6ec83bf77d2d5ce"
+    },
+    {
+      "key": "dev-cli#23",
+      "number": 23,
+      "result": "delivery-uncertain",
+      "observed_before_sha256": "2cf9107b31ba2012312c5f5a353be60487661c24515a8931e71e3a7ec481b3f4"
+    }
+  ],
+  "writes": 15,
+  "complete": false,
+  "fatal": "delivery-uncertain",
+  "product_acceptance": false,
+  "counts": {
+    "patch-received-awaiting-readback": 15,
+    "delivery-uncertain": 1
+  },
+  "pending_write": {
+    "key": "dev-cli#23",
+    "intended_sha256": "d19c23369b17de88501efe0c83ac328d8f4e8d865ffdd2e48263a06d2b04970c"
+  },
+  "readback_error": "HTTPError",
+  "planned": 21,
+  "remaining_or_conflicted": 21,
+  "finished_at": "2026-09-10T23:40:58.009069+00:00"
+}
