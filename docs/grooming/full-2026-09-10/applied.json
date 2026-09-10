@@ -1,0 +1,248 @@
+{
+  "repository": "alex-mextner/dev-cli",
+  "plan_ref": "94a1825f2f9e611031dd6b74eb1de2d8b3130c56",
+  "plan_sha256": "c47294eeeabfc47cad17a81fd30792048c11cb1382fd9a46be52b305e1689795",
+  "started_at": "2026-09-10T13:36:19.441657+00:00",
+  "mode": "apply",
+  "events": [
+    {
+      "number": 30,
+      "result": "parent-created",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    {
+      "number": 1,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "17f2e1e92761e63b165b7f149baeedd4f17340ca61af1c73c6ec83bf77d2d5ce",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/1"
+    },
+    {
+      "number": 2,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "5eccd8b7b9acd022abc4edff8d991baef74ee3e4e99629947818535a7c4f46d6",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/2"
+    },
+    {
+      "number": 3,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "5291a85d5bf6bcd17c07a08d776ba0fb9f9e5a318e4318dc27a1be3b1b21bb85",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/3"
+    },
+    {
+      "number": 4,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "11a600733a8f38de773cfda672ae94a8c514d031efdb1a43dfb95f3d99bf0e55",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/4"
+    },
+    {
+      "number": 6,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "3d969972590e0d6c06da40f50f8c3e153d1e361c1ecb922179d31f82afeb0f72",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/6"
+    },
+    {
+      "number": 7,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "94765ae32b7f3b399f3d8e7b008f41a13496bd1720ee2ba18d9523cf0c2b7bc7",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/7"
+    },
+    {
+      "number": 9,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "dbeadd7cc5ffa3f794c73f2610f41c691e5a85f218ecb664fad50e27eaf64bb6",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/9"
+    },
+    {
+      "number": 10,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "091da6b631539491f63d61b898207acfb98bdc0b30dde9a61e61262219842654",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/10"
+    },
+    {
+      "number": 11,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "e58a72c4a533840377dce2339feb087a7c811c12c7b433ce6148a633fe60da8a",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/11"
+    },
+    {
+      "number": 13,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "8223e66060d1891a73b66797acefa22d6263310c275b13dfd1dfb8eb4a7970c6",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/13"
+    },
+    {
+      "number": 14,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "3c0d42280a4f69ca192eafe52224290fd1056052435b1ac1d8ce36aff6b78a04",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/14"
+    },
+    {
+      "number": 15,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "534bae21d09fbff8e0adc310d07063efc271e374f54d1083b1adb67cece8fa2d",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/15"
+    },
+    {
+      "number": 16,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "006b26c111d05b30e23a429983d8568351919382a6125077ca8d8f6e4ef5c5f6",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/16"
+    },
+    {
+      "number": 19,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "d6a5f6f7cef0ff9496c3d208c2dfd7006975a9e605b8a1b1503fefb18abd5553",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/19"
+    },
+    {
+      "number": 20,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "a69098036d95b9e37922b7d6f8061ce00c7ca8e3408234dc8b626d5028fe4206",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/20"
+    },
+    {
+      "number": 21,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "32e2cd11525bd680be7eeb5c76f0dd562b9aaef459dfa2d0ee917174f85fbe1b",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/21"
+    },
+    {
+      "number": 22,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "b412c620443962592590233881f5d73a28a4613e05624ba4e7820ba4c3187883",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/22"
+    },
+    {
+      "number": 23,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "2cf9107b31ba2012312c5f5a353be60487661c24515a8931e71e3a7ec481b3f4",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/23"
+    },
+    {
+      "number": 25,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "e483e29495f0aad1e04bed8cf9a1bc655e459520eb088d254402dc464e6cf018",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/25"
+    },
+    {
+      "number": 27,
+      "result": "body-updated-readback-verified",
+      "body_sha256": "62c46a9a45bad6d1cf679c96283721a1a4023f16f86e0360703bc06e683e09e6",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/27"
+    }
+  ],
+  "parents": {
+    "1": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "2": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "3": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "4": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "6": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "7": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "9": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "10": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "11": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "13": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "14": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "15": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "16": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "19": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "20": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "21": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "22": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "23": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "25": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    },
+    "27": {
+      "status": "linked",
+      "url": "https://github.com/alex-mextner/dev-cli/issues/30",
+      "verified_parent": "https://github.com/alex-mextner/dev-cli/issues/30"
+    }
+  },
+  "newly_discovered": [],
+  "counts": {
+    "parent-created": 1,
+    "body-updated-readback-verified": 20
+  },
+  "api_reads": 24,
+  "api_writes": 46,
+  "root": "https://github.com/alex-mextner/dev-cli/issues/30",
+  "finished_at": "2026-09-10T13:37:58.730974+00:00",
+  "planned_issues": 20,
+  "processed_bodies": 20,
+  "native_parents_verified": 20
+}
