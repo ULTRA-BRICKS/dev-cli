@@ -13,8 +13,11 @@ from __future__ import annotations
 import os
 import json
 import signal
+import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -113,7 +116,9 @@ def test_run_allows_project_local_shell_wrapper(tmp_path, monkeypatch):
     script.write_text("#!/usr/bin/env bash\npytest\n", encoding="utf-8")
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: tmp_path)
-    monkeypatch.setattr(cli, "_load_rig_config", lambda _root: {"scripts": {"test": "bash scripts/test.sh"}})
+    monkeypatch.setattr(
+        cli, "_load_rig_config", lambda _root: {"scripts": {"test": "bash scripts/test.sh"}}
+    )
     monkeypatch.setattr(cli, "_run_shell", lambda command, cwd: calls.append((command, cwd)) or 0)
 
     assert cli.main(["run", "test"]) == 0
@@ -151,20 +156,20 @@ def test_run_allows_shell_wrapper_argument_named_c_after_script_path(tmp_path, m
         "bash -lc 'npm test <(cat secrets)'",
         "bash -lc 'npm test >(cat)'",
         "uv run bash -c 'pytest > /etc/something'",
-        "python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "node -e 'require(\"fs\").writeFileSync(\"pwned\", \"x\")'",
-        "uv run python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --with foo python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --with=foo python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run -p 3.11 python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run -p3.11 python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run -vp 3.11 python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --python-preference system python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --unknown-uv-flag value python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --unknown-uv-flag value --with foo python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run --u1 v1 --u2 v2 python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "uv run -- python -c 'open(\"pwned\", \"w\").write(\"x\")'",
-        "pnpm exec node -e 'require(\"fs\").writeFileSync(\"pwned\", \"x\")'",
+        'python -c \'open("pwned", "w").write("x")\'',
+        'node -e \'require("fs").writeFileSync("pwned", "x")\'',
+        'uv run python -c \'open("pwned", "w").write("x")\'',
+        'uv run --with foo python -c \'open("pwned", "w").write("x")\'',
+        'uv run --with=foo python -c \'open("pwned", "w").write("x")\'',
+        'uv run -p 3.11 python -c \'open("pwned", "w").write("x")\'',
+        'uv run -p3.11 python -c \'open("pwned", "w").write("x")\'',
+        'uv run -vp 3.11 python -c \'open("pwned", "w").write("x")\'',
+        'uv run --python-preference system python -c \'open("pwned", "w").write("x")\'',
+        'uv run --unknown-uv-flag value python -c \'open("pwned", "w").write("x")\'',
+        'uv run --unknown-uv-flag value --with foo python -c \'open("pwned", "w").write("x")\'',
+        'uv run --u1 v1 --u2 v2 python -c \'open("pwned", "w").write("x")\'',
+        'uv run -- python -c \'open("pwned", "w").write("x")\'',
+        'pnpm exec node -e \'require("fs").writeFileSync("pwned", "x")\'',
         "npm test > ~/.zshrc",
         "npm test 2>&1",
         "npm test &> out.log",
@@ -197,9 +202,7 @@ def test_run_rejects_unsafe_lifecycle_payloads(tmp_path, monkeypatch, capsys, co
         "uv run -p3.11 pytest tests/",
     ],
 )
-def test_run_allows_uv_runner_option_values_that_look_like_commands(
-    tmp_path, monkeypatch, command
-):
+def test_run_allows_uv_runner_option_values_that_look_like_commands(tmp_path, monkeypatch, command):
     cli = _import_cli()
     calls: list[tuple[str, Path]] = []
 
@@ -410,9 +413,7 @@ def test_start_uses_configured_logs_root_for_detached_output(tmp_path, monkeypat
     )
 
     assert cli.main(["start", "server"]) == 0
-    assert started == [
-        ("pnpm run dev", repo, repo / ".dev/logs/server" / "server-server.log")
-    ]
+    assert started == [("pnpm run dev", repo, repo / ".dev/logs/server" / "server-server.log")]
 
 
 def test_start_e2e_job_writes_state_file(tmp_path, monkeypatch):
@@ -521,16 +522,18 @@ def test_list_reports_configured_and_running_targets(tmp_path, monkeypatch, caps
     repo.mkdir()
     state.mkdir()
     (state / "server-server.json").write_text(
-        json.dumps({
-            "kind": "server",
-            "name": "server",
-            "pid": 2468,
-            "pgid": 2468,
-            "command": "pnpm run dev",
-            "cwd": str(repo),
-            "port": 5173,
-            "ports": [5173],
-        }),
+        json.dumps(
+            {
+                "kind": "server",
+                "name": "server",
+                "pid": 2468,
+                "pgid": 2468,
+                "command": "pnpm run dev",
+                "cwd": str(repo),
+                "port": 5173,
+                "ports": [5173],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -546,7 +549,7 @@ def test_list_reports_configured_and_running_targets(tmp_path, monkeypatch, caps
             "dev": {
                 "server": {"script": "server", "ports": [5173]},
                 "e2e": {"jobs": {"smoke": {"script": "e2e-smoke"}}},
-            }
+            },
         },
     )
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
@@ -566,19 +569,22 @@ def test_stop_named_server_uses_state_and_validates_before_signal(tmp_path, monk
     repo.mkdir()
     state.mkdir()
     (state / "server-server.json").write_text(
-        json.dumps({
-            "kind": "server",
-            "name": "server",
-            "pid": 2468,
-            "pgid": 2468,
-            "command": "pnpm run dev",
-            "cwd": str(repo),
-            "port": 5173,
-            "ports": [5173],
-        }),
+        json.dumps(
+            {
+                "kind": "server",
+                "name": "server",
+                "pid": 2468,
+                "pgid": 2468,
+                "command": "pnpm run dev",
+                "cwd": str(repo),
+                "port": 5173,
+                "ports": [5173],
+            }
+        ),
         encoding="utf-8",
     )
     sent: list[tuple[int, signal.Signals]] = []
+    group_members = [2468]
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
     monkeypatch.setattr(
@@ -591,10 +597,15 @@ def test_stop_named_server_uses_state_and_validates_before_signal(tmp_path, monk
     )
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: pid == 2468)
-    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: [2468])
+    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: list(group_members))
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "pnpm run dev")
-    monkeypatch.setattr(cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig)))
+
+    def send_process_group_signal(pgid: int, sig: signal.Signals) -> None:
+        sent.append((pgid, sig))
+        group_members.clear()
+
+    monkeypatch.setattr(cli, "_send_process_group_signal", send_process_group_signal)
 
     assert cli.main(["stop", "server"]) == 0
     assert sent == [(2468, signal.SIGTERM)]
@@ -619,6 +630,7 @@ def test_stop_named_server_can_resolve_configured_port(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
     monkeypatch.setattr(cli, "_pid_for_port", lambda port: 8642)
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "pnpm run dev")
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
@@ -635,13 +647,15 @@ def test_stop_target_cleans_stale_state_before_process_inspection(tmp_path, monk
     state.mkdir()
     record = state / "server-server.json"
     record.write_text(
-        json.dumps({
-            "kind": "server",
-            "name": "server",
-            "pid": 2468,
-            "command": "pnpm run dev",
-            "cwd": str(repo),
-        }),
+        json.dumps(
+            {
+                "kind": "server",
+                "name": "server",
+                "pid": 2468,
+                "command": "pnpm run dev",
+                "cwd": str(repo),
+            }
+        ),
         encoding="utf-8",
     )
     inspected: list[int] = []
@@ -657,7 +671,9 @@ def test_stop_target_cleans_stale_state_before_process_inspection(tmp_path, monk
     )
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
-    monkeypatch.setattr(cli, "_process_command", lambda pid: inspected.append(pid) or "pnpm run dev")
+    monkeypatch.setattr(
+        cli, "_process_command", lambda pid: inspected.append(pid) or "pnpm run dev"
+    )
 
     assert cli.main(["stop", "server"]) == 2
 
@@ -697,9 +713,7 @@ def test_start_rejects_destructive_lifecycle_command(tmp_path, monkeypatch, caps
 
 
 @pytest.mark.parametrize("operator", ["|", "&"])
-def test_start_rejects_destructive_lifecycle_companion(
-    tmp_path, monkeypatch, capsys, operator
-):
+def test_start_rejects_destructive_lifecycle_companion(tmp_path, monkeypatch, capsys, operator):
     cli = _import_cli()
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -864,6 +878,7 @@ def test_stop_pid_validates_dev_tool_and_project_before_terminating(tmp_path, mo
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: app)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "npm run dev")
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
 
     assert cli.main(["stop", "--pid", "1234"]) == 0
     assert sent == [(1234, signal.SIGTERM)]
@@ -921,7 +936,9 @@ def test_stop_pid_rejects_outside_cwd_even_if_command_mentions_repo(tmp_path, mo
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: outside)
-    monkeypatch.setattr(cli, "_process_command", lambda pid: f"node /elsewhere/app.js {repo / 'config.json'}")
+    monkeypatch.setattr(
+        cli, "_process_command", lambda pid: f"node /elsewhere/app.js {repo / 'config.json'}"
+    )
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
 
     code = cli.main(["stop", "--pid", "1001"])
@@ -940,7 +957,9 @@ def test_stop_pid_rejects_unknown_cwd_even_if_command_mentions_repo(tmp_path, mo
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: None)
-    monkeypatch.setattr(cli, "_process_command", lambda pid: f"node /elsewhere/app.js {repo / 'config.json'}")
+    monkeypatch.setattr(
+        cli, "_process_command", lambda pid: f"node /elsewhere/app.js {repo / 'config.json'}"
+    )
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
 
     code = cli.main(["stop", "--pid", "1002"])
@@ -964,6 +983,7 @@ def test_stop_pid_allows_extra_project_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: sibling)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "vite --host 0.0.0.0")
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
 
     assert cli.main(["stop", "--pid", "4321"]) == 0
     assert sent == [(4321, signal.SIGTERM)]
@@ -980,6 +1000,7 @@ def test_stop_port_maps_to_pid_then_validates_and_terminates(tmp_path, monkeypat
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "python -m http.server 8000")
     monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
 
     assert cli.main(["stop", "--port", "8000"]) == 0
     assert sent == [(2468, signal.SIGTERM)]
@@ -990,16 +1011,22 @@ def test_stop_pgid_validates_group_members_before_terminating(tmp_path, monkeypa
     repo = tmp_path / "repo"
     repo.mkdir()
     sent: list[tuple[int, signal.Signals]] = []
+    group_members = [101, 102]
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
-    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: [101, 102])
+    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: list(group_members))
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo / "app")
     monkeypatch.setattr(
         cli,
         "_process_command",
         lambda pid: "pnpm run dev" if pid == 101 else "node ./node_modules/vite/bin/vite.js",
     )
-    monkeypatch.setattr(cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig)))
+
+    def send_process_group_signal(pgid: int, sig: signal.Signals) -> None:
+        sent.append((pgid, sig))
+        group_members.clear()
+
+    monkeypatch.setattr(cli, "_send_process_group_signal", send_process_group_signal)
 
     assert cli.main(["stop", "--pgid", "5001"]) == 0
     assert sent == [(5001, signal.SIGTERM)]
@@ -1010,9 +1037,10 @@ def test_stop_pgid_skips_member_that_exits_during_inspection(tmp_path, monkeypat
     repo = tmp_path / "repo"
     repo.mkdir()
     sent: list[tuple[int, signal.Signals]] = []
+    group_members = [101, 102]
 
     monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
-    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: [101, 102])
+    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: list(group_members))
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo / "app")
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: pid == 101)
 
@@ -1022,7 +1050,12 @@ def test_stop_pgid_skips_member_that_exits_during_inspection(tmp_path, monkeypat
         return "pnpm run dev"
 
     monkeypatch.setattr(cli, "_process_command", process_command)
-    monkeypatch.setattr(cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig)))
+
+    def send_process_group_signal(pgid: int, sig: signal.Signals) -> None:
+        sent.append((pgid, sig))
+        group_members.clear()
+
+    monkeypatch.setattr(cli, "_send_process_group_signal", send_process_group_signal)
 
     assert cli.main(["stop", "--pgid", "5001"]) == 0
     assert sent == [(5001, signal.SIGTERM)]
@@ -1040,7 +1073,9 @@ def test_stop_pgid_rejects_unscoped_member_before_terminating(tmp_path, monkeypa
     monkeypatch.setattr(cli, "_process_group_members", lambda pgid: [201, 202])
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo if pid == 201 else outside)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "pnpm run dev")
-    monkeypatch.setattr(cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig)))
+    monkeypatch.setattr(
+        cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig))
+    )
 
     code = cli.main(["stop", "--pgid", "5002"])
 
@@ -1048,6 +1083,199 @@ def test_stop_pgid_rejects_unscoped_member_before_terminating(tmp_path, monkeypa
     assert code == 2
     assert "pid 202 does not appear scoped" in captured.err
     assert sent == []
+
+
+def test_terminate_pid_escalates_to_sigkill_when_grace_expires(tmp_path, monkeypatch):
+    """AC1 (dev-cli#27): a pid that survives the SIGTERM grace window gets SIGKILLed, and
+    `_terminate_pid` still only returns once `_pid_alive` confirms it's actually gone."""
+    cli = _import_cli()
+    sent: list[tuple[int, signal.Signals]] = []
+    alive = {"value": True}
+    clock = {"t": 0.0}
+
+    monkeypatch.setattr(cli, "_process_cwd", lambda pid: tmp_path)
+    monkeypatch.setattr(cli, "_process_command", lambda pid: "vite")
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: alive["value"])
+    monkeypatch.setattr(cli, "_send_signal", lambda pid, sig: sent.append((pid, sig)))
+
+    def send_signal_best_effort(pid: int, sig: signal.Signals) -> None:
+        sent.append((pid, sig))
+        alive["value"] = False
+
+    monkeypatch.setattr(cli, "_send_signal_best_effort", send_signal_best_effort)
+    monkeypatch.setattr(cli, "_STOP_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(cli.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: clock.update(t=clock["t"] + seconds))
+
+    cli._terminate_pid(4444, [tmp_path])
+
+    assert sent == [(4444, signal.SIGTERM), (4444, signal.SIGKILL)]
+
+
+def test_stop_target_kills_child_that_ignores_sigterm_before_removing_state(tmp_path, monkeypatch):
+    """AC3 (dev-cli#27): a real long-lived child that ignores SIGTERM must not have its state
+    record removed - or `dev stop` report success - until it is actually dead (after the
+    SIGKILL escalation). Uses a real subprocess so the regression is genuine, not mocked.
+    """
+    cli = _import_cli()
+    repo = tmp_path / "repo"
+    state = tmp_path / "state"
+    repo.mkdir()
+    state.mkdir()
+
+    script = tmp_path / "ignore_sigterm.py"
+    script.write_text(
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "print('ready', flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    child = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
+    # Block until the child has actually installed SIG_IGN (its print happens right after,
+    # sequentially, in the same process) - otherwise the SIGTERM below can race the child's
+    # startup and kill it via the default disposition before it ever ignores anything.
+    assert child.stdout is not None
+    assert child.stdout.readline().strip() == "ready"
+    try:
+        record = state / "server-server.json"
+        record.write_text(
+            json.dumps(
+                {
+                    "kind": "server",
+                    "name": "server",
+                    "pid": child.pid,
+                    "command": "vite",
+                    "cwd": str(repo),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
+        monkeypatch.setattr(
+            cli,
+            "_load_rig_config",
+            lambda _root: {"scripts": {"server": "vite"}, "dev": {"server": {"script": "server"}}},
+        )
+        monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
+        monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo)
+        monkeypatch.setattr(cli, "_process_command", lambda pid: "vite")
+        monkeypatch.setattr(cli, "_STOP_GRACE_SECONDS", 0.3)
+
+        result: dict = {}
+        thread = threading.Thread(
+            target=lambda: result.__setitem__("code", cli.main(["stop", "server"]))
+        )
+        thread.start()
+        try:
+            # SIGTERM was sent and is being ignored; the child is still alive and the state
+            # record must still be there - removing it now would be the exact bug (#27).
+            time.sleep(0.15)
+            assert record.exists()
+            assert child.poll() is None
+        finally:
+            thread.join(timeout=5)
+
+        assert result.get("code") == 0
+        assert not record.exists()
+        child.wait(timeout=2)
+        assert child.returncode is not None
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=2)
+
+
+def test_status_probes_port_for_unmanaged_listener_with_no_state_record(
+    tmp_path, monkeypatch, capsys
+):
+    """AC2 (dev-cli#27): no state record must not read as a flat 'configured' when something
+    is actually listening on the target's port."""
+    cli = _import_cli()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
+        monkeypatch.setattr(
+            cli,
+            "_load_rig_config",
+            lambda _root: {
+                "scripts": {"server": "vite"},
+                "dev": {"server": {"script": "server", "ports": [port]}},
+            },
+        )
+        monkeypatch.setattr(cli, "_state_dir", lambda _root: tmp_path / "state")
+
+        assert cli.main(["status", "server"]) == 0
+    finally:
+        listener.close()
+
+    captured = capsys.readouterr()
+    assert f"server server running (unmanaged) ports={port}" in captured.out
+
+
+def test_status_probes_port_after_stale_pid(tmp_path, monkeypatch, capsys):
+    """AC2 (dev-cli#27): a stale (dead) tracked pid must not hide a port a forked child kept
+    alive after inheriting the listening socket."""
+    cli = _import_cli()
+    repo = tmp_path / "repo"
+    state = tmp_path / "state"
+    repo.mkdir()
+    state.mkdir()
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    (state / "server-server.json").write_text(
+        json.dumps(
+            {
+                "kind": "server",
+                "name": "server",
+                "pid": 999999,
+                "command": "vite",
+                "cwd": str(repo),
+                "ports": [port],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        monkeypatch.setattr(cli, "_find_repo_root", lambda _start: repo)
+        monkeypatch.setattr(
+            cli,
+            "_load_rig_config",
+            lambda _root: {
+                "scripts": {"server": "vite"},
+                "dev": {"server": {"script": "server", "ports": [port]}},
+            },
+        )
+        monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
+        monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
+
+        assert cli.main(["status", "server"]) == 0
+    finally:
+        listener.close()
+
+    captured = capsys.readouterr()
+    assert f"server server stale (port busy) pid=999999 ports={port}" in captured.out
+
+
+def test_port_occupied_false_for_closed_port():
+    cli = _import_cli()
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()
+
+    assert cli._port_occupied(port) is False
 
 
 def test_status_e2e_reports_state_and_artifacts(tmp_path, monkeypatch, capsys):
@@ -1060,13 +1288,15 @@ def test_status_e2e_reports_state_and_artifacts(tmp_path, monkeypatch, capsys):
     (latest / "exit-code").write_text("0\n", encoding="utf-8")
     state.mkdir()
     (state / "e2e-smoke.json").write_text(
-        json.dumps({
-            "kind": "e2e",
-            "name": "smoke",
-            "pid": 1357,
-            "command": "pnpm exec playwright test",
-            "cwd": str(repo),
-        }),
+        json.dumps(
+            {
+                "kind": "e2e",
+                "name": "smoke",
+                "pid": 1357,
+                "command": "pnpm exec playwright test",
+                "cwd": str(repo),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -1086,7 +1316,7 @@ def test_status_e2e_reports_state_and_artifacts(tmp_path, monkeypatch, capsys):
                         },
                     }
                 }
-            }
+            },
         },
     )
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
@@ -1124,7 +1354,7 @@ def test_e2e_logs_prints_configured_log_tail(tmp_path, monkeypatch, capsys):
                         },
                     }
                 }
-            }
+            },
         },
     )
 
@@ -1163,9 +1393,7 @@ def test_logs_prefers_target_start_log_over_newer_shared_log(tmp_path, monkeypat
     assert captured.out.splitlines() == ["server two"]
 
 
-def test_e2e_logs_prefers_latest_run_log_over_detached_start_log(
-    tmp_path, monkeypatch, capsys
-):
+def test_e2e_logs_prefers_latest_run_log_over_detached_start_log(tmp_path, monkeypatch, capsys):
     cli = _import_cli()
     repo = tmp_path / "repo"
     root = repo / "e2e" / "docker-artifacts"
@@ -1240,9 +1468,7 @@ def test_e2e_logs_prefers_start_log_over_shared_artifact_root_without_run_dir(
     assert captured.out.splitlines() == ["smoke two"]
 
 
-def test_e2e_logs_prefers_configured_log_file_over_latest_run_log(
-    tmp_path, monkeypatch, capsys
-):
+def test_e2e_logs_prefers_configured_log_file_over_latest_run_log(tmp_path, monkeypatch, capsys):
     cli = _import_cli()
     repo = tmp_path / "repo"
     latest = repo / "e2e" / "docker-artifacts" / "run-grp-002"
@@ -1341,7 +1567,7 @@ def test_e2e_logs_prefers_e2e_target_when_server_name_matches(tmp_path, monkeypa
                         },
                     }
                 },
-            }
+            },
         },
     )
 
@@ -1364,11 +1590,7 @@ def test_e2e_logs_rejects_status_log_outside_project(tmp_path, monkeypatch, caps
         "_load_rig_config",
         lambda _root: {
             "scripts": {"e2e-smoke": "pnpm exec playwright test"},
-            "dev": {
-                "e2e": {
-                    "jobs": {"smoke": {"script": "e2e-smoke", "logs_root": str(outside)}}
-                }
-            }
+            "dev": {"e2e": {"jobs": {"smoke": {"script": "e2e-smoke", "logs_root": str(outside)}}}},
         },
     )
 
@@ -1397,11 +1619,7 @@ def test_e2e_logs_does_not_follow_symlink_outside_project(tmp_path, monkeypatch,
         "_load_rig_config",
         lambda _root: {
             "scripts": {"e2e-smoke": "pnpm exec playwright test"},
-            "dev": {
-                "e2e": {
-                    "jobs": {"smoke": {"script": "e2e-smoke", "logs_root": ".dev/logs"}}
-                }
-            },
+            "dev": {"e2e": {"jobs": {"smoke": {"script": "e2e-smoke", "logs_root": ".dev/logs"}}}},
         },
     )
 
@@ -1426,10 +1644,8 @@ def test_e2e_status_rejects_artifacts_root_outside_project(tmp_path, monkeypatch
         lambda _root: {
             "scripts": {"e2e-smoke": "pnpm exec playwright test"},
             "dev": {
-                "e2e": {
-                    "jobs": {"smoke": {"script": "e2e-smoke", "artifacts_root": "../outside"}}
-                }
-            }
+                "e2e": {"jobs": {"smoke": {"script": "e2e-smoke", "artifacts_root": "../outside"}}}
+            },
         },
     )
 
@@ -1448,14 +1664,16 @@ def test_e2e_run_and_stop_aliases(tmp_path, monkeypatch):
     calls: list[tuple[str, Path]] = []
     sent: list[tuple[int, signal.Signals]] = []
     (state / "e2e-smoke.json").write_text(
-        json.dumps({
-            "kind": "e2e",
-            "name": "smoke",
-            "pid": 4242,
-            "pgid": 4242,
-            "command": "pnpm exec playwright test",
-            "cwd": str(repo),
-        }),
+        json.dumps(
+            {
+                "kind": "e2e",
+                "name": "smoke",
+                "pid": 4242,
+                "pgid": 4242,
+                "command": "pnpm exec playwright test",
+                "cwd": str(repo),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -1471,10 +1689,16 @@ def test_e2e_run_and_stop_aliases(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_state_dir", lambda _root: state)
     monkeypatch.setattr(cli, "_run_shell", lambda command, cwd: calls.append((command, cwd)) or 0)
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: pid == 4242)
-    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: [4242])
+    group_members = [4242]
+    monkeypatch.setattr(cli, "_process_group_members", lambda pgid: list(group_members))
     monkeypatch.setattr(cli, "_process_cwd", lambda pid: repo)
     monkeypatch.setattr(cli, "_process_command", lambda pid: "pnpm exec playwright test")
-    monkeypatch.setattr(cli, "_send_process_group_signal", lambda pgid, sig: sent.append((pgid, sig)))
+
+    def send_process_group_signal(pgid: int, sig: signal.Signals) -> None:
+        sent.append((pgid, sig))
+        group_members.clear()
+
+    monkeypatch.setattr(cli, "_send_process_group_signal", send_process_group_signal)
 
     assert cli.main(["e2e", "run", "smoke", "--", "--headed"]) == 0
     assert cli.main(["e2e", "stop", "smoke"]) == 0
@@ -1484,7 +1708,9 @@ def test_e2e_run_and_stop_aliases(tmp_path, monkeypatch):
 
 def test_pid_for_port_uses_lsof_output(monkeypatch):
     cli = _import_cli()
-    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/lsof" if name == "lsof" else None)
+    monkeypatch.setattr(
+        cli.shutil, "which", lambda name: "/usr/bin/lsof" if name == "lsof" else None
+    )
 
     def fake_run(args, **_kwargs):
         assert args[:4] == ["lsof", "-nP", "-iTCP:5173", "-sTCP:LISTEN"]
@@ -1495,7 +1721,9 @@ def test_pid_for_port_uses_lsof_output(monkeypatch):
 
 def test_pid_for_port_rejects_multiple_unique_lsof_pids(monkeypatch):
     cli = _import_cli()
-    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/lsof" if name == "lsof" else None)
+    monkeypatch.setattr(
+        cli.shutil, "which", lambda name: "/usr/bin/lsof" if name == "lsof" else None
+    )
 
     def fake_run(_args, **_kwargs):
         return SimpleNamespace(returncode=0, stdout="13579\n24680\n13579\n", stderr="")
