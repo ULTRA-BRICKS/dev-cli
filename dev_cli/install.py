@@ -33,16 +33,10 @@ SKILL_MD = """\
 ---
 name: dev
 description: >-
-  Project-scoped dev/e2e process runner. Runs a repo's `rig.yaml` scripts and manages
-  background dev servers / e2e jobs, per project. Use INSTEAD of raw `pkill`/`lsof`/`ps` for
-  dev-process cleanup and instead of hand-rolled test/e2e invocation. Commands:
-  `dev start|list|status|logs|run <script>|has-script|stop|e2e|shot|env`. `dev shot` captures a
-  screenshot with a scroll sweep, refuses a blank or wrong-sized capture, and records
-  machine-checked visual proof bound to the staged change (process discipline, not a
-  security boundary) — use it to satisfy the visual-proof
-  commit gate. `dev stop` is
-  safe-by-default — it SIGTERMs only a known dev/e2e runner scoped to the current repo (or
-  `DEV_PROJECT_PATHS`). Exit 2 = invalid args/unsafe stop target; 127 = missing platform helper.
+  Project-scoped dev/e2e process runner. Runs a repo's `rig.yaml` scripts, manages
+  background dev servers/e2e jobs. Use INSTEAD of ad-hoc process cleanup or hand-rolled
+  test/e2e invocation. Commands: `dev start|status|run <script>|stop|e2e|shot|env`. `dev
+  shot` captures proof screenshots; `dev stop` signals only a scoped runner.
 metadata:
   author: alex-mextner
   repo: https://github.com/alex-mextner/dev-cli
