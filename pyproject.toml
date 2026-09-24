@@ -30,7 +30,7 @@ test = ["pytest", "pyyaml"]
 dev = "dev_cli.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/alex-mextner/dev-cli"
+Homepage = "https://git.hyperide.ai/ultrabricks/dev-cli"
 
 # Discover the tool package AND the vendored library (so an editable/pip install makes
 # agenttools_config importable too, alongside the checkout-time vendor/ sys.path shims). The

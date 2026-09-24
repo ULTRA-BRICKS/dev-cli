@@ -21,7 +21,7 @@ PyYAML lazily inside the command that needs it, so `dev --help`, `dev --version`
 ./install.sh
 
 # or piped from curl
-curl -fsSL https://raw.githubusercontent.com/alex-mextner/dev-cli/main/install.sh | bash
+curl -fsSL https://git.hyperide.ai/ultrabricks/dev-cli/raw/branch/main/install.sh | bash
 ```
 
 `install.sh` symlinks `bin/dev` into `~/.local/bin`, ensures PyYAML is available (needed to read

@@ -39,7 +39,7 @@ description: >-
   shot` captures proof screenshots; `dev stop` signals only a scoped runner.
 metadata:
   author: alex-mextner
-  repo: https://github.com/alex-mextner/dev-cli
+  repo: https://git.hyperide.ai/ultrabricks/dev-cli
 ---
 
 # dev — project-scoped dev/e2e process runner
