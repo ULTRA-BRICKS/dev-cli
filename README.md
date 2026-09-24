@@ -20,10 +20,10 @@ Pick one — each ends with `dev` on your PATH:
 
 ```bash
 # 1. uv — recommended; macOS, Linux and Windows (incl. Cygwin / Git Bash)
-uv tool install 'dev-cli[yaml] @ git+https://git.hyperide.ai/ultrabricks/dev-cli'
+uv tool install 'hyper-dev[yaml]'
 
 # 2. pipx
-pipx install 'dev-cli[yaml] @ git+https://git.hyperide.ai/ultrabricks/dev-cli'
+pipx install 'hyper-dev[yaml]'
 
 # 3. one-liner — clones to ~/.local/share/dev-cli, links dev into ~/.local/bin, registers the agent skill
 curl -fsSL https://git.hyperide.ai/ultrabricks/dev-cli/raw/branch/main/install.sh | bash
@@ -33,15 +33,13 @@ git clone https://git.hyperide.ai/ultrabricks/dev-cli && cd dev-cli && ./install
 ```
 
 - After **1** or **2**, run `dev install-skill` once so coding agents discover `dev` (3 and 4 do it for you).
-- **Update:** `uv tool upgrade dev-cli` · `pipx upgrade dev-cli` · re-run the one-liner · `git pull`.
+- **Unreleased `main`:** `uv tool install 'hyper-dev[yaml] @ git+https://git.hyperide.ai/ultrabricks/dev-cli'` (or the same with `pipx install`).
+- **Update:** `uv tool upgrade hyper-dev` · `pipx upgrade hyper-dev` · re-run the one-liner · `git pull`.
 - **Via rig:** clone into `~/xp/dev-cli` and list `dev` under `tools.items` in `~/.config/rig/config.yaml` — `rig apply commit` runs its `install.sh` and keeps the clone fresh.
 - **Windows:** use uv (option 1) — `./install.sh` and the one-liner do exactly that under Cygwin / Git Bash. If a command dies with `UnicodeEncodeError` in mintty, run `setx PYTHONUTF8 1` once. More: [rig-cli → Windows](https://git.hyperide.ai/ultrabricks/rig-cli#windows-cygwin-git-bash-powershell).
 
-> **Not on PyPI — always install from the git URL.** A bare `pipx install dev-cli` /
-> `uv tool install dev-cli` does not install this tool: the name is unclaimed on PyPI or (for
-> `rig-cli`, `dev-cli`, `harness-cli`) belongs to an unrelated project. The canonical repo is
-> **git.hyperide.ai/ultrabricks/dev-cli**; `github.com/alex-mextner/dev-cli` is a frozen,
-> archived mirror.
+> **On PyPI as `hyper-dev`** (the command is still `dev`). `dev-cli` on PyPI is an unrelated project — `pipx install dev-cli` would install that. The canonical repo is
+> **git.hyperide.ai/ultrabricks/dev-cli**; `github.com/alex-mextner/dev-cli` is a frozen, archived mirror.
 
 `install.sh` symlinks `bin/dev` into `~/.local/bin`, ensures PyYAML is available (needed to read `rig.yaml`), registers the `dev` agent skill, and removes any prior `agenttools-dev` uv-tool install it supersedes.
 

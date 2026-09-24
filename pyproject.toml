@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dev-cli"
+name = "hyper-dev"
 version = "0.1.2"
 description = "Project-scoped dev/e2e process runner: run a repo's rig.yaml scripts and manage background dev servers / e2e jobs, per project, with safe-by-default process control. Spun out of the agent-tools umbrella (was lib/agenttools_dev)."
 readme = "README.md"
