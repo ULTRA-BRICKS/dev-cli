@@ -35,6 +35,7 @@ git clone https://git.hyperide.ai/ultrabricks/dev-cli && cd dev-cli && ./install
 - After **1** or **2**, run `dev install-skill` once so coding agents discover `dev` (3 and 4 do it for you).
 - **Unreleased `main`:** `uv tool install 'hyper-dev[yaml] @ git+https://git.hyperide.ai/ultrabricks/dev-cli'` (or the same with `pipx install`).
 - **Update:** `uv tool upgrade hyper-dev` · `pipx upgrade hyper-dev` · re-run the one-liner · `git pull`.
+- **Installed before the rename** (as `dev-cli`, from git)? Remove that first — `uv tool uninstall dev-cli` or `pipx uninstall dev-cli` — or two installs both claim `dev`.
 - **Via rig:** clone into `~/xp/dev-cli` and list `dev` under `tools.items` in `~/.config/rig/config.yaml` — `rig apply commit` runs its `install.sh` and keeps the clone fresh.
 - **Windows:** use uv (option 1) — `./install.sh` and the one-liner do exactly that under Cygwin / Git Bash. If a command dies with `UnicodeEncodeError` in mintty, run `setx PYTHONUTF8 1` once. More: [rig-cli → Windows](https://git.hyperide.ai/ultrabricks/rig-cli#windows-cygwin-git-bash-powershell).
 
