@@ -27,3 +27,10 @@ version: 1
 # deliberate one-off bypass.
 agent_hooks:
   worktree_only: true
+
+task:
+  backend: forgejo
+  forgejo:
+    url: https://git.hyperide.ai
+    repo: ultrabricks/dev-cli
+    attachment_mode: native
