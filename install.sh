@@ -27,6 +27,10 @@ case "$(uname -s)" in
       exit 1
     fi
     _with=(); [[ -n "${UV_WITH:-}" ]] && _with=(--with "$UV_WITH")  # one argument, spaces and all
+    if uv tool list 2>/dev/null | grep -q '^agenttools-dev'; then  # same cleanup as below
+      echo "dev: removing the superseded 'agenttools-dev' uv tool"
+      uv tool uninstall agenttools-dev >/dev/null 2>&1 || true
+    fi
     _here=""
     if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
       _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,6 +72,7 @@ _url_host_path() {  # https / ssh / scp-style git URL -> "host path" (user@, :po
     *) return 1 ;;
   esac
   [ "$_path" != "$_u" ] || return 1
+  case "$_hp" in *[!A-Za-z0-9._:@%~-]*) return 1 ;; esac  # e.g. `\` (a host separator to some parsers)
   _host=${_hp##*@}; _host=${_host%%:*}
   printf '%s %s\n' "$_host" "$_path"
 }
@@ -104,7 +109,7 @@ else
       exit 1
     fi
     echo "dev: updating existing clone at $CLONE_DIR"
-    git -C "$CLONE_DIR" pull --ff-only
+    git -C "$CLONE_DIR" pull --ff-only origin HEAD  # the remote just validated, not branch.*.remote
   else
     echo "dev: cloning $EXPECT_URL into $CLONE_DIR"
     git clone "$EXPECT_URL" "$CLONE_DIR"
