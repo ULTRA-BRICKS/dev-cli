@@ -30,9 +30,9 @@ jobs:
       - name: Checkout agent-tools (the canonical lib source)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          repository: alex-mextner/agent-tools
+          repository: ${{ github.repository_owner }}/agent-tools
           path: .agent-tools-src
-          token: ${{ secrets.AGENT_TOOLS_TOKEN }}   # required while agent-tools is private
+          token: ${{ secrets.AGENT_TOOLS_TOKEN || github.token }}   # AGENT_TOOLS_TOKEN only while agent-tools is private
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -66,6 +66,41 @@ jobs:
           else
             title="vendored-libs drift CHECK failed (infra error, not drift)"
             body=$'The scheduled drift check exited with an infrastructure error (>=2), NOT a body mismatch — likely a canonical path moved in agent-tools (VENDORED list), a bad checkout, or a script crash. Re-syncing the body is NOT the fix; investigate the check itself. See `.github/workflows/vendored-libs-drift.yml`.'
+          fi
+          if [ "${GITHUB_SERVER_URL:-https://github.com}" != "https://github.com" ]; then
+            # Forgejo / Gitea: no gh CLI there — the same find-or-create flow through the REST
+            # API v1 (stdlib python3), with the job token.
+            TITLE="$title" BODY="$body" python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          api = (os.environ.get("GITHUB_API_URL") or os.environ["GITHUB_SERVER_URL"].rstrip("/") + "/api/v1").rstrip("/")
+          base = f"{api}/repos/{os.environ['GITHUB_REPOSITORY']}"
+          title, body = os.environ["TITLE"], os.environ["BODY"]
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(base + path, data=data, method=method, headers={
+                  "Accept": "application/json", "Content-Type": "application/json",
+                  "Authorization": f"token {os.environ.get('GH_TOKEN', '')}"})
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  raw = resp.read()
+              return json.loads(raw) if raw else None
+          found = call("GET", f"/issues?state=open&type=issues&limit=50&q={urllib.parse.quote(title)}") or []
+          existing = next((i["number"] for i in found if i.get("title") == title), None)
+          if existing:
+              call("POST", f"/issues/{existing}/comments", {"body": body})
+          else:
+              labels = []
+              try:
+                  have = call("GET", "/labels?limit=50") or []
+                  drift = next((l["id"] for l in have if l.get("name") == "drift"), None)
+                  if drift is None:
+                      drift = call("POST", "/labels", {"name": "drift", "color": "#fbca04",
+                                                       "description": "vendored-copy drift from canonical"})["id"]
+                  labels = [drift]
+              except Exception as exc:  # a missing label must not stop the issue
+                  print(f"note: could not ensure the drift label: {exc}")
+              call("POST", "/issues", {"title": title, "body": body, "labels": labels})
+          PY
+            exit $?  # python's outcome: a failed find-or-create must fail the job
           fi
           # Match the EXACT title (the drift vs infra titles share words — a substring search
           # could comment on the wrong one). `--jq` filters on an exact `.title == $title`;
